@@ -1,0 +1,11 @@
+network_auelp
+date_20241016
+batch_A
+scheme_random
+dim
+b
+xi
+rho_nu
+k
+n
+nu
