@@ -13,16 +13,17 @@ import matplotlib.pyplot as plt
 import matplotlib as mpl
 
 
-def load_files(name, network="auelp"):
+def load_files(name: str, network="auelp"):
     """Load data from files core_x, core_y, and edges."""
-    name: str
     base_path = os.path.join(os.getcwd(), "Data", network)
     core_x = np.loadtxt(os.path.join(base_path, name + '-core_x.dat'))
     core_y = np.loadtxt(os.path.join(base_path, name + '-core_y.dat'))
     edges = np.loadtxt(os.path.join(base_path, name + '-conn_core_edges.dat'))
     pb_edges = np.loadtxt(os.path.join(base_path, name + '-conn_pb_edges.dat'))
+    node_type = np.loadtxt(os.path.join(base_path, name +
+                                        '-core_node_type.dat'))
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
-    return [core_x, core_y, edges, pb_edges, box_size]
+    return [core_x, core_y, node_type, edges, pb_edges, box_size]
 
 
 def create_neighborhood(x, y, factor=1):
@@ -57,11 +58,15 @@ def wrap_coords(first_point, L):
     return z1
 
 
-def check_neighborhood(neighborhood, bead_positions):
+def check_neighborhood(neighborhood, bead_positions, cutoff=0.1):
     """Check to see if neighbors are occupied."""
     for j, pair in enumerate(neighborhood):
-        checkx = np.where(bead_positions[:, 0] == pair[0])[0]
-        checky = np.where(bead_positions[:, 1] == pair[1])[0]
+        wrapped_positions = np.apply_along_axis(unwrap_coords, 1,
+                                                bead_positions,
+                                                second_point=pair,
+                                                L=BOX_SIZE)
+        checkx = np.where(abs(wrapped_positions[:, 0] - pair[0]) <= cutoff)[0]
+        checky = np.where(abs(wrapped_positions[:, 1] - pair[1]) <= cutoff)[0]
         if np.isin(checkx, checky).any():
             neighborhood[j] = (False, False)
     # If all occupied, returns False, else returns neighborhood
@@ -148,7 +153,8 @@ def constrained_walk(start, end, n=15):
     [y0, yn] = wrap_coords([start[1], end[1]], BOX_SIZE)
     x = x0
     y = y0
-    bead_positions = np.zeros([n+1, 2])
+    bead_positions = np.empty((n+1, 2))
+    bead_positions[:] = np.nan
     bead_positions[0] = [x0, y0]
     bead_positions[-1] = [xn, yn]
 
@@ -164,7 +170,7 @@ def constrained_walk(start, end, n=15):
         target_point = x, y
         xn, yn = step_choice(i, current_point, target_point, bead_positions, n)
         bead_positions[n-i-1] = wrap_coords([xn, yn], BOX_SIZE)
-    return bead_positions
+    return bead_positions[1:-1]
 
 
 def calculate_wrapped_distance(array):
@@ -182,7 +188,7 @@ def calculate_wrapped_distance(array):
     return np.array(results)
 
 
-def create_atom_list(x_data, y_data, edge_data):
+def create_atom_list(x_data, y_data, node_type, edge_data):
     """Create panda Data Frame of generated positions and nodes."""
     atom_list = pd.DataFrame(data=np.arange(0, ((LENGTH_OF_CHAIN + 1)
                                                 * len(edge_data) +
@@ -190,19 +196,20 @@ def create_atom_list(x_data, y_data, edge_data):
                              columns=['ID'])
     atom_list['X'] = np.nan
     atom_list['Y'] = np.nan
-    atom_list['Mol'] = 'Mol'
+    atom_list['Mol'] = np.nan
     atom_list.loc[np.arange(0, len(NodeX)), "X"] = x_data
     atom_list.loc[np.arange(0, len(NodeX)), "Y"] = y_data
-    atom_list.loc[np.arange(0, len(NodeX)), "Mol"] = 'Node'
+    atom_list.loc[np.arange(0, len(NodeX)), "atom-type"] = node_type
+    atom_list.loc[np.arange(0, len(NodeX)), "Mol"] = 0
     return atom_list
 
 
 STUDY_NAME = '20241016A1C0'
 LENGTH_OF_CHAIN = 25
 
-[NodeX, NodeY, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
+[NodeX, NodeY, NodeType, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
-bead_data = create_atom_list(NodeX, NodeY, FullEdges)
+bead_data = create_atom_list(NodeX, NodeY, NodeType, FullEdges)
 
 
 # %% Plot All Edges
@@ -214,9 +221,9 @@ fullcycle = np.zeros([len(FullEdges), 2])
 for chain, edge in enumerate(FullEdges):
     point0 = (NodeX[int(edge[0])], NodeY[int(edge[0])])
     pointN = (NodeX[int(edge[1])], NodeY[int(edge[1])])
-    diff = 50
+    maxdist = 50
     cycle = 0
-    while diff > 3 and cycle < 25:  # arbitrary cut offs
+    while maxdist > 3 and cycle < 25:  # arbitrary cut offs
         path = constrained_walk(start=point0, end=pointN,
                                 n=LENGTH_OF_CHAIN)
         pathX = path[:, 0]
@@ -224,8 +231,8 @@ for chain, edge in enumerate(FullEdges):
         curr = max([max(calculate_wrapped_distance(pathX)),
                     max(calculate_wrapped_distance(pathY))])
         cycle += 1
-        diff = min(diff, curr)
-    fullcycle[chain] = [cycle, diff]
+        maxdist = min(maxdist, curr)
+    fullcycle[chain] = [cycle, maxdist]
     plt.scatter(pathX, pathY, color=colors[counter], marker='o')
     # plt.plot(pathX, pathY, color=colors[counter], linestyle='-')
     plt.scatter(point0[0], point0[1], color='k', marker='>')
@@ -240,7 +247,10 @@ for chain, edge in enumerate(FullEdges):
     bead_data.loc[np.arange(len(NodeX) + (chain * len(pathX)),
                             len(NodeX) + ((chain + 1) * len(pathX))),
                   "Mol"] = chain + 1
-    if diff > 3:
+    bead_data.loc[np.arange(len(NodeX) + (chain * len(pathX)),
+                            len(NodeX) + ((chain + 1) * len(pathX))),
+                  "atom-type"] = 2
+    if maxdist > 3:
         plt.gca().set_aspect('equal')
         plt.show()
         print(max(calculate_wrapped_distance(pathX)),
