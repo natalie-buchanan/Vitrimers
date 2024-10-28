@@ -20,7 +20,9 @@ def load_files(name, network="auelp"):
     core_x = np.loadtxt(os.path.join(base_path, name + '-core_x.dat'))
     core_y = np.loadtxt(os.path.join(base_path, name + '-core_y.dat'))
     edges = np.loadtxt(os.path.join(base_path, name + '-conn_core_edges.dat'))
-    return [core_x, core_y, edges]
+    pb_edges = np.loadtxt(os.path.join(base_path, name + '-conn_pb_edges.dat'))
+    box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
+    return [core_x, core_y, edges, pb_edges, box_size]
 
 
 def create_neighborhood(x, y, factor=1):
@@ -29,6 +31,30 @@ def create_neighborhood(x, y, factor=1):
             (x, y - factor), (False, False), (x, y + factor),
             (x + factor, y - factor), (x + factor, y),
             (x + factor, y + factor)]
+
+
+def unwrap_coords(first_point, second_point, L):
+    """Unwrap pair of coordinates."""
+    v1 = np.array(first_point)
+    v2 = np.array(second_point)
+    diff = abs(v1 - v2)
+    z1 = v1.copy()
+    wrap_flag = np.zeros_like(v1)
+    wrap_flag[(diff > L/2) & (v1 < v2)] = 1
+    wrap_flag[(diff > L/2) & (v1 > v2)] = -1
+    z1[(diff > L/2) & (v1 < v2)] += L
+    z1[(diff > L/2) & (v1 > v2)] -= L
+
+    return z1
+
+
+def wrap_coords(first_point, L):
+    """Wrap pair of coordinates."""
+    v1 = np.array(first_point, dtype='float64')
+    z1 = v1.copy()
+    z1[v1 > L] -= L
+    z1[v1 < 0] += L
+    return z1
 
 
 def check_neighborhood(neighborhood, bead_positions):
@@ -48,17 +74,12 @@ def find_neighborhood(x, y, bead_positions):
     """Create neighborhood that is not fully occupied."""
     neighborhood = create_neighborhood(x, y)
     if not check_neighborhood(neighborhood, bead_positions):
-        # print(neighborhood)
-        # for j, pair in enumerate(neighborhood):
-        #     neighborhood[j] = tuple(int(t) for t in pair)
-        #     print(neighborhood)
         # generate neighborhood of points 1.5 away if all 1 away are occupied
+        neighborhood = create_neighborhood(x, y, factor=1.5)
         if not check_neighborhood(neighborhood, bead_positions):
-            neighborhood = create_neighborhood(x, y, factor=1.5)
-            if not check_neighborhood(neighborhood, bead_positions):
-                raise ValueError(
-                    'Neighborhood full: ' +
-                    str(check_neighborhood(neighborhood, bead_positions)))
+            raise ValueError(
+                'Neighborhood full: ' +
+                str(check_neighborhood(neighborhood, bead_positions)))
     return neighborhood
 
 
@@ -123,8 +144,8 @@ def step_choice(i, current_point, target_point, bead_positions, n):
 
 def constrained_walk(start, end, n=15):
     """Generate atom position in a constrained walk between two nodes."""
-    x0, xn = start[0], end[0]
-    y0, yn = start[1], end[1]
+    [x0, xn] = wrap_coords([start[0], end[0]], BOX_SIZE)
+    [y0, yn] = wrap_coords([start[1], end[1]], BOX_SIZE)
     x = x0
     y = y0
     bead_positions = np.zeros([n+1, 2])
@@ -135,20 +156,36 @@ def constrained_walk(start, end, n=15):
         # Step from starting side
         current_point = x, y
         target_point = xn, yn
+        current_point = unwrap_coords(current_point, target_point, BOX_SIZE)
         x, y = step_choice(i, current_point, target_point, bead_positions, n)
-        bead_positions[i+1] = [x, y]
+        bead_positions[i+1] = wrap_coords([x, y], BOX_SIZE)
         # Step from ending side
         current_point = xn, yn
         target_point = x, y
         xn, yn = step_choice(i, current_point, target_point, bead_positions, n)
-        bead_positions[n-i-1] = [xn, yn]
+        bead_positions[n-i-1] = wrap_coords([xn, yn], BOX_SIZE)
     return bead_positions
 
 
-def create_atom_list(x_data, y_data):
+def calculate_wrapped_distance(array):
+    """sdsd."""
+    num_rows = array.shape[0]
+    results = np.zeros_like(array)
+
+    for i in range(0, num_rows - 1, 1):
+        new_row1 = unwrap_coords(array[i], array[i + 1], BOX_SIZE)
+
+        # Calculate the difference between new_row1 and row i+1
+        diff = new_row1 - array[i + 1]
+        results[i] = diff
+
+    return np.array(results)
+
+
+def create_atom_list(x_data, y_data, edge_data):
     """Create panda Data Frame of generated positions and nodes."""
     atom_list = pd.DataFrame(data=np.arange(0, ((LENGTH_OF_CHAIN + 1)
-                                                * len(Edges) +
+                                                * len(edge_data) +
                                                 len(x_data)), 1),
                              columns=['ID'])
     atom_list['X'] = np.nan
@@ -163,17 +200,18 @@ def create_atom_list(x_data, y_data):
 STUDY_NAME = '20241016A1C0'
 LENGTH_OF_CHAIN = 25
 
-[NodeX, NodeY, Edges] = load_files(STUDY_NAME)
-bead_data = create_atom_list(NodeX, NodeY)
-Edges = Edges[0:3]
+[NodeX, NodeY, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
+FullEdges = np.concatenate((Edges, PB_edges))
+bead_data = create_atom_list(NodeX, NodeY, FullEdges)
 
 
+# %% Plot All Edges
 cmap = mpl.colormaps['rainbow']
-colors = cmap(np.linspace(0, 1, len(Edges)))
+colors = cmap(np.linspace(0, 1, len(FullEdges)))
 plt.figure()
 counter = 0
-fullcycle = np.zeros([len(Edges), 2])
-for chain, edge in enumerate(Edges):
+fullcycle = np.zeros([len(FullEdges), 2])
+for chain, edge in enumerate(FullEdges):
     point0 = (NodeX[int(edge[0])], NodeY[int(edge[0])])
     pointN = (NodeX[int(edge[1])], NodeY[int(edge[1])])
     diff = 50
@@ -183,12 +221,13 @@ for chain, edge in enumerate(Edges):
                                 n=LENGTH_OF_CHAIN)
         pathX = path[:, 0]
         pathY = path[:, 1]
-        curr = max([max(np.diff(pathX)), max(np.diff(pathY))])
+        curr = max([max(calculate_wrapped_distance(pathX)),
+                    max(calculate_wrapped_distance(pathY))])
         cycle += 1
         diff = min(diff, curr)
     fullcycle[chain] = [cycle, diff]
     plt.scatter(pathX, pathY, color=colors[counter], marker='o')
-    plt.plot(pathX, pathY, color=colors[counter], linestyle='-')
+    # plt.plot(pathX, pathY, color=colors[counter], linestyle='-')
     plt.scatter(point0[0], point0[1], color='k', marker='>')
     plt.scatter(pointN[0], pointN[1], color='k', marker='>')
     counter += 1
@@ -201,10 +240,11 @@ for chain, edge in enumerate(Edges):
     bead_data.loc[np.arange(len(NodeX) + (chain * len(pathX)),
                             len(NodeX) + ((chain + 1) * len(pathX))),
                   "Mol"] = chain + 1
-    if max(np.diff(pathX)) > 3 or max(np.diff(pathY)) > 3:
+    if diff > 3:
         plt.gca().set_aspect('equal')
         plt.show()
-        print(max(np.diff(pathX)), max(np.diff(pathY)))
+        print(max(calculate_wrapped_distance(pathX)),
+              max(calculate_wrapped_distance(pathY)))
         raise ValueError('Error in chain ' + str(chain))
 plt.xlabel("X")
 plt.ylabel("Y")
