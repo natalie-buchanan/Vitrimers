@@ -69,8 +69,10 @@ def wrap_coords(first_point, L):
     """Wrap pair of coordinates."""
     v1 = np.array(first_point, dtype='float64')
     z1 = v1.copy()
-    z1[v1 > L] -= L
-    z1[v1 < 0] += L
+    while np.any(np.less(z1, 0)):
+        z1[z1 < 0] += L
+    while np.any(np.greater(z1, L)):
+        z1[z1 > L] -= L
     return z1
 
 
@@ -80,15 +82,24 @@ def check_neighborhood(neighborhood, bead_positions, cutoff=0):
         if not pair:
             neighborhood[j] = False
         else:
-            wrapped_positions = np.apply_along_axis(unwrap_coords, 1,
-                                                    bead_positions,
-                                                    second_point=pair,
-                                                    L=BOX_SIZE)
-            checkx = np.where(abs(wrapped_positions[:, 0] - pair[0]) <= cutoff)[0]
-            checky = np.where(abs(wrapped_positions[:, 1] - pair[1]) <= cutoff)[0]
-            checkz = np.where(abs(wrapped_positions[:, 2] - pair[2]) <= cutoff)[0]
-    
-            if np.isin(checkx, checky, checkz).any():
+            test = pd.DataFrame(bead_positions, columns=["X", "Y", "Z"])
+            test.dropna(axis=0, inplace=True)
+            wrapped_positions = test.apply(unwrap_coords, axis=1,
+                                           second_point=pair, L=BOX_SIZE,
+                                           result_type='broadcast')
+            check = abs(wrapped_positions - pair) <= cutoff
+            # checkx = np.where((abs(wrapped_positions[:, 0] - pair[0])
+            #                    <= cutoff) |
+            #                   (not np.isnan(wrapped_positions[:, 0])))[0]
+            # checky = np.where((abs(wrapped_positions[:, 1] - pair[1])
+            #                    <= cutoff) |
+            #                   (not np.isnan(wrapped_positions[:, 1])))[0]
+            # checkz = np.where((abs(wrapped_positions[:, 2] - pair[2])
+            #                    <= cutoff) |
+            #                   (not np.isnan(wrapped_positions[:, 2])))[0]
+
+            # if np.isin(checkx, checky, checkz).any():
+            if check.any().any():
                 neighborhood[j] = False
     # If all occupied, returns False, else returns neighborhood
     if not any(t for t in neighborhood):
@@ -101,7 +112,7 @@ def find_neighborhood(x, y, z, bead_positions):
     neighborhood = create_neighborhood(x, y, z)
     if not check_neighborhood(neighborhood, bead_positions):
         # generate neighborhood of points 1.5 away if all 1 away are occupied
-        neighborhood = create_neighborhood(x, y, z, factor=.5)
+        neighborhood = create_neighborhood(x, y, z, factor=.75)
         if not check_neighborhood(neighborhood, bead_positions):
             raise ValueError(
                 'Neighborhood full: ' + str(neighborhood))
@@ -169,18 +180,21 @@ def step_choice(i, current_point, target_point, bead_positions, n):
                                                 target_point, n, i)
 
     neighborhood = find_neighborhood(x, y, z, bead_positions)
-    index_x = select_indices(theta_x, neighborhood, 'x')
-    index_y = select_indices(theta_y, neighborhood, 'y')
-    index_z = select_indices(theta_z, neighborhood, 'z')
+    index_x = set(select_indices(theta_x, neighborhood, 'x'))
+    index_y = set(select_indices(theta_y, neighborhood, 'y'))
+    index_z = set(select_indices(theta_z, neighborhood, 'z'))
 
-    options = (tuple(set(index_x) & set(index_y) & set(index_z)))
+    options = (tuple(index_x & index_y & index_z))
     options = [elem for elem in options if
                isinstance(neighborhood[elem], (list, tuple))
                and all(neighborhood[elem])]
     if options:
         choice = random.choice(options)
     else:
-        options = [elem for elem in index_x + index_y + index_z if
+        options = tuple((index_x & index_y - index_z) |
+                        (index_x & index_z - index_y) |
+                        (index_y & index_z - index_x))
+        options = [elem for elem in options if
                    isinstance(neighborhood[elem], (list, tuple))
                    and all(neighborhood[elem])]
         if options:
@@ -229,7 +243,7 @@ def calculate_wrapped_distance(array):
         new_row1 = unwrap_coords(array[i], array[i + 1], BOX_SIZE)
 
         # Calculate the difference between new_row1 and row i+1
-        diff = new_row1 - array[i + 1]
+        diff = abs(new_row1 - array[i + 1])
         results[i] = diff
 
     return np.array(results)
@@ -282,6 +296,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
     ax = fig.add_subplot(projection='3d')
     fullcycle = np.zeros([len(full_edge_data), 2])
     for chain, edge in enumerate(full_edge_data):
+        print(chain)
         point_0 = (node_x[int(edge[0])], node_y[int(edge[0])],
                    node_z[int(edge[0])])
         point_n = (node_x[int(edge[1])], node_y[int(edge[1])],
@@ -328,7 +343,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 
 # %%
 STUDY_NAME = '20241016B1C1'
-LENGTH_OF_CHAIN = 25
+LENGTH_OF_CHAIN = 100
 
 [NodeData, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
@@ -341,10 +356,10 @@ BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,
 colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
 fig = plt.figure()
 ax = fig.add_subplot(projection='3d')
-ax.scatter(BeadData[BeadData['Mol'] == 0]["X"],
-           BeadData[BeadData['Mol'] == 0]["Y"],
-           BeadData[BeadData['Mol'] == 0]["Z"],
-           marker='>', color='k')
+# ax.scatter(BeadData[BeadData['Mol'] == 0]["X"],
+#            BeadData[BeadData['Mol'] == 0]["Y"],
+#            BeadData[BeadData['Mol'] == 0]["Z"],
+#            marker='>', color='k')
 ax.scatter(BeadData[BeadData['Mol'] == 10]["X"],
            BeadData[BeadData['Mol'] == 10]["Y"],
            BeadData[BeadData['Mol'] == 10]["Z"],

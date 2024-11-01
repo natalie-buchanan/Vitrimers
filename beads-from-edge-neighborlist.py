@@ -23,9 +23,11 @@ def load_files(name: str, network="auelp"):
     node_type = np.loadtxt(os.path.join(base_path, name +
                                         '-core_node_type.dat'))
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
+    len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
+                                               '-n.dat')))
     node_files = [core_x, core_y, node_type]
 
-    return [node_files, edges, pb_edges, box_size]
+    return [node_files, edges, pb_edges, box_size, len_of_chain]
 
 
 def write_LAMMPS_data(name: str, atom_data, bond_data, network="auelp"):
@@ -170,9 +172,12 @@ def calculate_theta(current_point, target_point, n, i):
     """Calculate chance of moving in positive or negative direction."""
     x, y = current_point
     xtarg, ytarg = target_point
-
-    theta_x = 0.5 * (1 - ((xtarg - x) / (n - (i * 2))))
-    theta_y = 0.5 * (1 - ((ytarg - y) / (n - (i * 2))))
+    if (n - (i * 2)) == 0:
+        denom = 1
+    else:
+        denom = (n - (i * 2))
+    theta_x = 0.5 * (1 - ((xtarg - x) / denom))
+    theta_y = 0.5 * (1 - ((ytarg - y) / denom))
     return theta_x, theta_y
 
 
@@ -301,13 +306,10 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 # %% Create Network
 
 STUDY_NAME = '20241016A1C1'
-LENGTH_OF_CHAIN = 25
 
-[NodeData, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
+[NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
 BeadData = create_atom_list(NodeData, FullEdges)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData = create_chains(FullEdges, BondData, BeadData, NodeData)
-
-# %% Test
 write_LAMMPS_data(STUDY_NAME, BeadData, BondData)
