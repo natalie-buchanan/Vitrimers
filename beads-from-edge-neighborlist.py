@@ -11,59 +11,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-
-
-def load_files(name: str, network="auelp"):
-    """Load data from files core_x, core_y, and edges."""
-    base_path = os.path.join(os.getcwd(), "Data", network)
-    core_x = np.loadtxt(os.path.join(base_path, name + '-core_x.dat'))
-    core_y = np.loadtxt(os.path.join(base_path, name + '-core_y.dat'))
-    edges = np.loadtxt(os.path.join(base_path, name + '-conn_core_edges.dat'))
-    pb_edges = np.loadtxt(os.path.join(base_path, name + '-conn_pb_edges.dat'))
-    node_type = np.loadtxt(os.path.join(base_path, name +
-                                        '-core_node_type.dat'))
-    box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
-    len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                               '-n.dat')))
-    node_files = [core_x, core_y, node_type]
-
-    return [node_files, edges, pb_edges, box_size, len_of_chain]
-
-
-def write_LAMMPS_data(name: str, atom_data, bond_data, network="auelp"):
-    """Write LAMMPS in.data file including positions and bonds."""
-    base_path = os.path.join(os.getcwd(), "Data", network)
-    data_file = os.path.join(base_path, name + '-in.data')
-    with open(data_file, "w",  encoding="utf-8") as file:
-        file.write("""{name}
-
-{num_atoms} atoms
-{num_bonds} bond
-
-0 {L_box} xlo xhi
-0 {L_box} ylo yhi
-
-Masses\n\n""".format(name=name, num_atoms=len(atom_data),
-                   num_bonds=len(bond_data), L_box=BOX_SIZE))
-        for i in atom_data["atom-type"].drop_duplicates().sort_values():
-            file.write(f'{int(i)} 1\n')
-        file.write("""
-Atoms # ID molID type x y z\n\n""")
-        for i in atom_data.index:
-            file.write(f"{int(atom_data.iloc[i]['ID']+1)} " +
-                       f"{int(atom_data.iloc[i]['Mol']+1)} " +
-                       f"{int(atom_data.iloc[i]['atom-type'])} " +
-                       f"{atom_data.iloc[i]['X']} " +
-                       f"{atom_data.iloc[i]['Y']} " +
-                       "0 \n")
-        file.write("""
-Bonds\n\n""")
-        for i in bond_data.index:
-            file.write(f"{i + 1} " +
-                       f"{int(bond_data.iloc[i]['BondType'])} " +
-                       f"{int(bond_data.iloc[i]['Atom1'])} " +
-                       f"{int(bond_data.iloc[i]['Atom2'])} " +
-                       "\n")
+import file_functions
 
 
 def unwrap_coords(first_point, second_point, L):
@@ -72,9 +20,9 @@ def unwrap_coords(first_point, second_point, L):
     v2 = np.array(second_point)
     diff = abs(v1 - v2)
     z1 = v1.copy()
-    wrap_flag = np.zeros_like(v1)
-    wrap_flag[(diff > L/2) & (v1 < v2)] = 1
-    wrap_flag[(diff > L/2) & (v1 > v2)] = -1
+    # wrap_flag = np.zeros_like(v1)
+    # wrap_flag[(diff > L/2) & (v1 < v2)] = 1
+    # wrap_flag[(diff > L/2) & (v1 > v2)] = -1
     z1[(diff > L/2) & (v1 < v2)] += L
     z1[(diff > L/2) & (v1 > v2)] -= L
 
@@ -84,10 +32,11 @@ def unwrap_coords(first_point, second_point, L):
 def wrap_coords(first_point, L):
     """Wrap pair of coordinates."""
     v1 = np.array(first_point, dtype='float64')
-    z1 = v1.copy()
-    z1[v1 > L] -= L
-    z1[v1 < 0] += L
-    return z1
+    v1 = v1 % L
+    # z1 = v1.copy()
+    # z1[v1 > L] -= L
+    # z1[v1 < 0] += L
+    return v1
 
 
 def calculate_wrapped_distance(array):
@@ -105,7 +54,7 @@ def calculate_wrapped_distance(array):
     return np.array(results)
 
 
-def create_neighborhood(x, y, factor=1):
+def create_neighborhood(x, y, factor=0.97):
     """Create neighborhood."""
     return [(x-factor, y-factor), (x - factor, y), (x - factor, y + factor),
             (x, y - factor), (False, False), (x, y + factor),
@@ -132,10 +81,10 @@ def check_neighborhood(neighborhood, bead_positions, cutoff=0.1):
 
 def find_neighborhood(x, y, bead_positions):
     """Create neighborhood that is not fully occupied."""
-    neighborhood = create_neighborhood(x, y)
+    neighborhood = create_neighborhood(x, y, BOND_LENGTH)
     if not check_neighborhood(neighborhood, bead_positions):
         # generate neighborhood of points 1.5 away if all 1 away are occupied
-        neighborhood = create_neighborhood(x, y, factor=1.5)
+        neighborhood = create_neighborhood(x, y, factor=.7*BOND_LENGTH)
         if not check_neighborhood(neighborhood, bead_positions):
             raise ValueError(
                 'Neighborhood full: ' +
@@ -173,9 +122,9 @@ def calculate_theta(current_point, target_point, n, i):
     x, y = current_point
     xtarg, ytarg = target_point
     if (n - (i * 2)) == 0:
-        denom = 1
+        denom = 1*BOND_LENGTH
     else:
-        denom = (n - (i * 2))
+        denom = (n - (i * 2))*BOND_LENGTH
     theta_x = 0.5 * (1 - ((xtarg - x) / denom))
     theta_y = 0.5 * (1 - ((ytarg - y) / denom))
     return theta_x, theta_y
@@ -229,21 +178,6 @@ def constrained_walk(start, end, n):
         xn, yn = step_choice(i, current_point, target_point, bead_positions, n)
         bead_positions[n + 1 - i] = wrap_coords([xn, yn], BOX_SIZE)
     return bead_positions[1:-1]
-
-
-def create_atom_list(node_data, edge_data):
-    """Create panda Data Frame of generated positions and nodes."""
-    x_data, y_data, node_type = node_data
-    atom_list = pd.DataFrame(data={'ID':
-                                   np.arange(0, ((LENGTH_OF_CHAIN) *
-                                                 len(edge_data) +
-                                                 len(x_data)), 1),
-                                   'X': np.nan, 'Y': np.nan, 'Mol': np.nan})
-    atom_list.loc[np.arange(0, len(x_data)), "X"] = x_data
-    atom_list.loc[np.arange(0, len(x_data)), "Y"] = y_data
-    atom_list.loc[np.arange(0, len(x_data)), "atom-type"] = node_type
-    atom_list.loc[np.arange(0, len(x_data)), "Mol"] = 0
-    return atom_list
 
 
 def update_bond_list(bead_ids, node_id, bond_list):
@@ -306,10 +240,29 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 # %% Create Network
 
 STUDY_NAME = '20241016A1C1'
+BOND_LENGTH = .97
 
-[NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
+[NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = \
+    file_functions.load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
-BeadData = create_atom_list(NodeData, FullEdges)
+BeadData = file_functions.create_atom_list(NodeData, FullEdges,
+                                           LENGTH_OF_CHAIN)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData = create_chains(FullEdges, BondData, BeadData, NodeData)
-write_LAMMPS_data(STUDY_NAME, BeadData, BondData)
+file_functions.write_LAMMPS_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
+
+# %% Check
+# test = BeadData.copy()
+# for i in range(len(test)-2):
+#     c_point = BeadData.loc[i, ["X", "Y"]]
+#     x_point = BeadData.loc[i, ["X", "Y"]]
+#     n_point = unwrap_coords(c_point, x_point, BOX_SIZE)
+#     test.loc[i, ["X", "Y"]] = n_point
+
+# plt.figure()
+# nodes = test[test["Mol"] == 0]
+# other = test[test["Mol"] != 0]
+# color = mpl.colormaps['rainbow'](np.linspace(0, 1, int(max(test["Mol"]))))
+# plt.scatter(nodes["X"], nodes["Y"], c='k', marker='>')
+# plt.scatter(other["X"], other["Y"], c=other["Mol"])
+# plt.show()

@@ -30,24 +30,50 @@ def load_files(name: str, network="auelp"):
     return [node_files, edges, pb_edges, box_size]
 
 
-def create_neighborhood(x, y, z, factor=1):
+def create_neighborhood(x, y, z, factor=0.97):
     """Create neighborhood."""
-    return [(x - factor, y - factor, z - factor),
-            (x - factor, y, z - factor),
-            (x - factor, y + factor, z - factor),
-            (x, y - factor, z - factor), (x, y, z - factor),
-            (x, y + factor, z - factor), (x + factor, y - factor, z - factor),
-            (x + factor, y, z - factor), (x + factor, y + factor, z - factor),
-            (x - factor, y - factor, z), (x - factor, y, z),
-            (x - factor, y + factor, z),
-            (x, y - factor, z), False,
-            (x, y + factor, z), (x + factor, y - factor, z),
-            (x + factor, y, z), (x + factor, y + factor, z),
-            (x - factor, y - factor, z + factor), (x - factor, y, z + factor),
-            (x - factor, y + factor, z + factor),
-            (x, y - factor, z + factor), (x, y, z + factor),
-            (x, y + factor, z + factor), (x + factor, y - factor, z + factor),
-            (x + factor, y, z + factor), (x + factor, y + factor, z + factor)]
+    points = []
+    for theta in np.linspace(0, 2*np.pi, 9): # Adjust number for finer granularity
+        for phi in np.linspace(0, np.pi, 9):   # Adjust number for finer granularity
+    
+            xn = x + factor * np.sin(phi) * np.cos(theta)
+            yn = y + factor * np.sin(phi) * np.sin(theta)
+            zn = z + factor * np.cos(phi)
+
+            points.append([xn, yn, zn])
+    points = np.array(points)
+    print(points)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(projection='3d')
+    ax.scatter(points[:, 0], points[:, 1], points[:, 2], c='b', marker='o', label='Points at Distance')
+    ax.scatter(x, y, z, color='k')
+    # Draw axes through the center point
+    ax.plot([x - 1, x + 1], [y, y], [z, z], 'k--', linewidth=1)  # x-axis
+    ax.plot([x, x], [y - 1, y + 1], [z, z], 'k--', linewidth=1)  # y-axis
+    ax.plot([x, x], [y, y], [z - 1, z + 1], 'k--', linewidth=1)
+    
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    plt.show()
+    return np.array(points)
+    # return [(x - factor, y - factor, z - factor),
+    #         (x - factor, y, z - factor),
+    #         (x - factor, y + factor, z - factor),
+    #         (x, y - factor, z - factor), (x, y, z - factor),
+    #         (x, y + factor, z - factor), (x + factor, y - factor, z - factor),
+    #         (x + factor, y, z - factor), (x + factor, y + factor, z - factor),
+    #         (x - factor, y - factor, z), (x - factor, y, z),
+    #         (x - factor, y + factor, z),
+    #         (x, y - factor, z), False,
+    #         (x, y + factor, z), (x + factor, y - factor, z),
+    #         (x + factor, y, z), (x + factor, y + factor, z),
+    #         (x - factor, y - factor, z + factor), (x - factor, y, z + factor),
+    #         (x - factor, y + factor, z + factor),
+    #         (x, y - factor, z + factor), (x, y, z + factor),
+    #         (x, y + factor, z + factor), (x + factor, y - factor, z + factor),
+    #         (x + factor, y, z + factor), (x + factor, y + factor, z + factor)]
 
 
 def unwrap_coords(first_point, second_point, L):
@@ -294,7 +320,9 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
     colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(full_edge_data)))
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
-    fullcycle = np.zeros([len(full_edge_data), 2])
+    fullcycle = pd.DataFrame(data=np.zeros([len(full_edge_data), 2]),
+                             columns=["Cycles", "Max Dist"])
+
     for chain, edge in enumerate(full_edge_data):
         print(chain)
         point_0 = (node_x[int(edge[0])], node_y[int(edge[0])],
@@ -312,7 +340,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
             curr = max(calculate_wrapped_distance_full(path))[0]
             cycle += 1
             maxdist = min(maxdist, curr)
-        fullcycle[chain] = [cycle, maxdist]
+        fullcycle.iloc[chain] = [cycle, maxdist]
         ax.scatter(path_x, path_y, path_z, color=colors[chain], marker='o')
         # ax.plot(path_x, path_y, path_z, color=colors[chain], linestyle='-')
         plt.scatter(point_0[0], point_0[1], point_0[2], color='k', marker='>')
@@ -343,7 +371,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 
 # %%
 STUDY_NAME = '20241016B1C1'
-LENGTH_OF_CHAIN = 100
+LENGTH_OF_CHAIN = 10
 
 [NodeData, Edges, PB_edges, BOX_SIZE] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
