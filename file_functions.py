@@ -77,3 +77,23 @@ def create_atom_list(node_data, edge_data, length_of_chain):
     atom_list.loc[np.arange(0, len(x_data)), "atom-type"] = node_type
     atom_list.loc[np.arange(0, len(x_data)), "Mol"] = 0
     return atom_list
+
+
+
+def create_atom_list_3D(node_data, edge_data, length_of_chain):
+    """Create panda Data Frame of generated positions and nodes."""
+    [x_data, y_data, z_data, node_type] = [node_data[:,0], node_data[:,1],
+                                           node_data[:,2], node_data[:,3]]
+    atom_list = pd.DataFrame(data={'ID':
+                                   np.arange(0, ((length_of_chain) *
+                                                 len(edge_data) +
+                                                 len(x_data)), 1),
+                                   'X': np.nan, 'Y': np.nan, 'Z': np.nan,
+                                   'Mol': np.nan})
+    atom_list.loc[np.arange(0, len(x_data)), "X"] = x_data
+    atom_list.loc[np.arange(0, len(x_data)), "Y"] = y_data
+    atom_list.loc[np.arange(0, len(x_data)), "Z"] = z_data
+    atom_list.loc[np.arange(0, len(x_data)), "atom-type"] = node_type
+    atom_list.loc[np.arange(0, len(x_data)), "Mol"] = 0
+    return atom_list
+

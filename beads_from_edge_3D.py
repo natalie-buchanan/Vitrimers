@@ -25,6 +25,7 @@ def load_files(name: str, network="auelp"):
     node_type = np.loadtxt(os.path.join(base_path, name +
                                         '-core_node_type.dat'))
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
+    # subtract 1 to get number of connecting beads from number of bonds
     len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
                                                '-n.dat'))) - 1
     node_files = np.asarray([core_x, core_y, core_z, node_type])
@@ -170,10 +171,11 @@ def calculate_theta(current_point, target_point, n, i):
     """Calculate chance of moving in positive or negative direction."""
     x, y, z = current_point
     xtarg, ytarg, ztarg = target_point
+    denom = (0.97 / 2.0) * (n - (i * 2))
 
-    theta_x = 0.5 * (1 - ((xtarg - x) / (n - (i * 2))))
-    theta_y = 0.5 * (1 - ((ytarg - y) / (n - (i * 2))))
-    theta_z = 0.5 * (1 - ((ztarg - z) / (n - (i * 2))))
+    theta_x = 0.5 * (1 - ((xtarg - x) / denom))
+    theta_y = 0.5 * (1 - ((ytarg - y) / denom))
+    theta_z = 0.5 * (1 - ((ztarg - z) / denom))
     return theta_x, theta_y, theta_z
 
 
@@ -366,3 +368,19 @@ ax.scatter(BeadData[BeadData['Mol'] == 10]["X"],
            marker='.', c=colors[BeadData['Mol'] == 10], alpha=0.7)
 
 plt.show()
+
+
+colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
+fig = plt.figure()
+ax = fig.add_subplot(projection='3d')
+ax.scatter(BeadData[BeadData['Mol'] == 0]["X"],
+           BeadData[BeadData['Mol'] == 0]["Y"],
+           BeadData[BeadData['Mol'] == 0]["Z"],
+           marker='>', color='k')
+ax.plot(BeadData[BeadData['Mol'] == 10]["X"],
+           BeadData[BeadData['Mol'] == 10]["Y"],
+           BeadData[BeadData['Mol'] == 10]["Z"],
+           marker='.')
+
+plt.show()
+
