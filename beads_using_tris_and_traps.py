@@ -56,7 +56,6 @@ def upside_down_trapezoid(start, end, number_of_beads, short_base):
       normal_vector = np.cross(base_vector, np.array([0, 1, 0]))
 
     normal_vector = normal_vector / np.linalg.norm(normal_vector) 
-    print(normal_vector)
 
     delta = np.cos(alpha)
     v3 = start + delta*base_vector + height*normal_vector
@@ -70,7 +69,6 @@ def create_positions(points, lengths, number_of_beads):
     [start, v3, v4, end] = points
     [short_base, long_base, side] = lengths
     AtomPositions=pd.DataFrame(data=np.zeros([number_of_beads+2, 3]), columns=["X", "Y", "Z"], index = np.arange(0, number_of_beads+2))
-    # BUG: Beads are off a position. Nodes should be 0 and N+1. Currently last node is N
     generated_positions = np.linspace(start, v3, int(side)+1)
     for i in range(int(side)+1):
         print(i)
@@ -85,13 +83,23 @@ def create_positions(points, lengths, number_of_beads):
         AtomPositions.loc[int(side) + i, "Y"] = generated_positions[i, 1]
         AtomPositions.loc[int(side) + i, "Z"] = generated_positions[i, 2]
     
-    generated_positions = np.linspace(v4, end, int(side) + 1)
-    for i in range(int(side)+1):
+    generated_positions = np.linspace(v4, end, int(side) + 2)
+    for i in range(int(side) + 2):
         print(int(side) + int(long_base) + i)
         AtomPositions.loc[int(side) + int(long_base) + i, "X"] = generated_positions[i, 0]
         AtomPositions.loc[int(side) + int(long_base) + i, "Y"] = generated_positions[i, 1]
         AtomPositions.loc[int(side) + int(long_base) + i, "Z"] = generated_positions[i, 2]
     print(AtomPositions)
+
+    fig = plt.figure()
+    colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
+    ax = fig.add_subplot(projection='3d')
+    ax.plot(AtomPositions["X"],
+            AtomPositions["Y"],
+            AtomPositions["Z"],
+            marker='.')
+
+    plt.show()
 
 def trapezoid():
     pass
@@ -112,6 +120,7 @@ def init_shape_creation(start, end, number_of_beads, box_size):
     print(vector, dist)
     bond_length = 0.97
 
+    end = unwrap_positions(end)
     if number_of_beads % 2:
         print('ODD')
         if (dist > 0) and (dist <= bond_length):
