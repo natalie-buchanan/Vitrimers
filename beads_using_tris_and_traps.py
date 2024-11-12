@@ -33,11 +33,19 @@ def load_files(name: str, network="auelp"):
     return [node_files, edges, pb_edges, box_size, len_of_chain]
 
 
+def unwrap_nodes(start, end, box_size):
+    for i in range(len(start)):
+        diff = np.abs(end[i] - start[i])
+        if diff > (box_size-diff):
+            end[i] -= box_size
+    return end
+
+
 def upside_down_trapezoid(start, end, number_of_beads, short_base):
     possible_shapes = []
     for long_base in np.arange(1, (number_of_beads + short_base)/2, 2):
         side = (number_of_beads - long_base)/2
-        if (long_base%1 == 0) and (side%1 == 0):
+        if (long_base % 1 == 0) and (side % 1 == 0):
             possible_shapes.append([long_base, side])
     long_base, side = random.choice(possible_shapes)
 
@@ -46,16 +54,16 @@ def upside_down_trapezoid(start, end, number_of_beads, short_base):
 
     base_vector = end - start
     base_length = np.linalg.norm(base_vector)
-        
-    if abs(base_length - short_base) > 1e-6:
-      print("Error: provided base length does not match side_lengths[0]")
-      return None
-    
-    normal_vector = np.cross(base_vector, np.array([0, 0, 1]))
-    if np.allclose(normal_vector, np.array([0,0,0])):
-      normal_vector = np.cross(base_vector, np.array([0, 1, 0]))
 
-    normal_vector = normal_vector / np.linalg.norm(normal_vector) 
+    if abs(base_length - short_base) > 1e-6:
+        print("Error: provided base length does not match side_lengths[0]")
+        return None
+
+    normal_vector = np.cross(base_vector, np.array([0, 0, 1]))
+    if np.allclose(normal_vector, np.array([0, 0, 0])):
+        normal_vector = np.cross(base_vector, np.array([0, 1, 0]))
+
+    normal_vector = normal_vector / np.linalg.norm(normal_vector)
 
     delta = np.cos(alpha)
     v3 = start + delta*base_vector + height*normal_vector
@@ -68,7 +76,8 @@ def upside_down_trapezoid(start, end, number_of_beads, short_base):
 def create_positions(points, lengths, number_of_beads):
     [start, v3, v4, end] = points
     [short_base, long_base, side] = lengths
-    AtomPositions=pd.DataFrame(data=np.zeros([number_of_beads+2, 3]), columns=["X", "Y", "Z"], index = np.arange(0, number_of_beads+2))
+    AtomPositions = pd.DataFrame(data=np.zeros(
+        [number_of_beads+2, 3]), columns=["X", "Y", "Z"], index=np.arange(0, number_of_beads+2))
     generated_positions = np.linspace(start, v3, int(side)+1)
     for i in range(int(side)+1):
         print(i)
@@ -82,13 +91,16 @@ def create_positions(points, lengths, number_of_beads):
         AtomPositions.loc[int(side) + i, "X"] = generated_positions[i, 0]
         AtomPositions.loc[int(side) + i, "Y"] = generated_positions[i, 1]
         AtomPositions.loc[int(side) + i, "Z"] = generated_positions[i, 2]
-    
+
     generated_positions = np.linspace(v4, end, int(side) + 2)
     for i in range(int(side) + 2):
         print(int(side) + int(long_base) + i)
-        AtomPositions.loc[int(side) + int(long_base) + i, "X"] = generated_positions[i, 0]
-        AtomPositions.loc[int(side) + int(long_base) + i, "Y"] = generated_positions[i, 1]
-        AtomPositions.loc[int(side) + int(long_base) + i, "Z"] = generated_positions[i, 2]
+        AtomPositions.loc[int(side) + int(long_base) + i,
+                          "X"] = generated_positions[i, 0]
+        AtomPositions.loc[int(side) + int(long_base) + i,
+                          "Y"] = generated_positions[i, 1]
+        AtomPositions.loc[int(side) + int(long_base) + i,
+                          "Z"] = generated_positions[i, 2]
     print(AtomPositions)
 
     fig = plt.figure()
@@ -101,8 +113,10 @@ def create_positions(points, lengths, number_of_beads):
 
     plt.show()
 
+
 def trapezoid():
     pass
+
 
 def init_shape_creation(start, end, number_of_beads, box_size):
     """Generate a chain that forms a trapezoid or triangle."""
@@ -119,36 +133,38 @@ def init_shape_creation(start, end, number_of_beads, box_size):
     dist = np.sqrt(dx**2 + dy**2 + dz**2)
     print(vector, dist)
     bond_length = 0.97
-
-    end = unwrap_positions(end)
+    print(start, end)
+    end = unwrap_nodes(end)
+    print(end)
     if number_of_beads % 2:
         print('ODD')
         if (dist > 0) and (dist <= bond_length):
             points = upside_down_trapezoid()
         elif dist > bond_length <= 2*bond_length:
             points = trapezoid()
-        
+
     else:
         print('EVEN')
     return vector
 
+
 def select_chain(full_edge_data, bond_data, bead_data, node_data):
     """Create chains."""
-    [node_x, node_y, node_z, node_type] = [node_data[:,0], node_data[:,1],
-                                           node_data[:,2], node_data[:,3]]
+    [node_x, node_y, node_z, node_type] = [node_data[:, 0], node_data[:, 1],
+                                           node_data[:, 2], node_data[:, 3]]
     colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(full_edge_data)))
     plt.figure()
     fullcycle = np.zeros([len(full_edge_data), 2])
     for chain, edge in enumerate(full_edge_data):
         point_0 = np.array([node_x[int(edge[0])], node_y[int(edge[0])],
-                   node_z[int(edge[0])]])
+                            node_z[int(edge[0])]])
         point_n = np.array([node_x[int(edge[1])], node_y[int(edge[1])],
-                   node_z[int(edge[1])]])
+                            node_z[int(edge[1])]])
         maxdist = 50  # arbitrary large value to start
         cycle = 0
         while maxdist > 3 and cycle < 25:  # arbitrary cut offs
             path = init_shape_creation(start=point_0, end=point_n,
-                             number_of_beads=LENGTH_OF_CHAIN, box_size=BOX_SIZE)
+                                       number_of_beads=LENGTH_OF_CHAIN, box_size=BOX_SIZE)
             path_x = path[:, 0]
             path_y = path[:, 1]
             curr = 1
@@ -184,14 +200,16 @@ def select_chain(full_edge_data, bond_data, bead_data, node_data):
 
 # %%
 
+
 STUDY_NAME = '20241016B1C1'
 
 [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
 BeadData = file_functions.create_atom_list_3D(NodeData, FullEdges,
-                                           LENGTH_OF_CHAIN)
+                                              LENGTH_OF_CHAIN)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 step = 1/(2*np.sqrt(3))
-points, lengths = upside_down_trapezoid(np.array([1, 1, 5]), np.array([1+step, 1+step, 5+step]),25, 0.5)
+points, lengths = upside_down_trapezoid(
+    np.array([1, 1, 5]), np.array([1+step, 1+step, 5+step]), 25, 0.5)
 create_positions(points, lengths, 25)
 # BeadData, BondData = select_chain(FullEdges, BondData, BeadData, NodeData)
