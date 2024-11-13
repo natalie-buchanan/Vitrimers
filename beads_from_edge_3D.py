@@ -27,7 +27,8 @@ def load_files(name: str, network="auelp"):
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
     # subtract 1 to get number of connecting beads from number of bonds
     len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                               '-n.dat'))) - 1
+                                               '-nu.dat'))[int(name[-1])])
+    len_of_chain -= 1
     node_files = np.asarray([core_x, core_y, core_z, node_type])
     node_files = node_files.transpose()
 
@@ -120,18 +121,6 @@ def check_distances(A, B, distance, box_size):
 def check_neighborhood(neighborhood, bead_positions, cutoff=0.5):
     """Check to see if neighbors are occupied."""
     truth = check_distances(neighborhood, bead_positions, cutoff, BOX_SIZE)
-    # for j, pair in enumerate(neighborhood):
-    #     if not pair.all():
-    #         neighborhood[j] = False
-    #     else:
-    #         test = pd.DataFrame(bead_positions, columns=["X", "Y", "Z"])
-    #         test.dropna(axis=0, inplace=True)
-    #         unwrap_positions = test.apply(unwrap_coords, axis=1,
-    #                                        second_point=pair, L=BOX_SIZE,
-    #                                        result_type='broadcast')
-    #         check = abs(unwrap_positions - pair) <= cutoff
-    #         if check.any().all():
-    #             neighborhood[j] = False
     # If all occupied, returns False, else returns neighborhood
     test = neighborhood[~truth]
     if not test.any():
@@ -202,9 +191,9 @@ def step_choice(i, current_point, target_point, bead_positions, n):
 
 def constrained_walk(start, end, n=15):
     """Generate atom position in a constrained walk between two nodes."""
-    [x0, xn] = wrap_coords([start[0], end[0]], BOX_SIZE)
-    [y0, yn] = wrap_coords([start[1], end[1]], BOX_SIZE)
-    [z0, zn] = wrap_coords([start[2], end[2]], BOX_SIZE)
+    [x0, y0, z0] = start
+    [xn, yn, zn] = end
+    [x0, y0, z0] = unwrap_coords(start, end, BOX_SIZE)
     x = x0
     y = y0
     z = z0
@@ -220,13 +209,15 @@ def constrained_walk(start, end, n=15):
         current_point = unwrap_coords(current_point, target_point, BOX_SIZE)
         x, y, z = step_choice(i, current_point, target_point,
                               bead_positions, n)
-        bead_positions[i+1] = wrap_coords([x, y, z], BOX_SIZE)
+        bead_positions[i+1] = [x, y, z]
+        # bead_positions[i+1] = wrap_coords([x, y, z], BOX_SIZE)
         # Step from ending side
         current_point = xn, yn, zn
         target_point = x, y, zn
         xn, yn, zn = step_choice(i, current_point, target_point,
                                  bead_positions, n)
-        bead_positions[n-i-1] = wrap_coords([xn, yn, zn], BOX_SIZE)
+        bead_positions[n-(i+1)] = [xn, yn, zn]
+        # bead_positions[n-i-1] = wrap_coords([xn, yn, zn], BOX_SIZE)
     return bead_positions[1:-1]
 
 
@@ -303,7 +294,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
                    node_z[int(edge[1])])
         maxdist = 50  # arbitrary large value to start
         cycle = 0
-        while maxdist > 3 and cycle < 25:  # arbitrary cut offs
+        while maxdist > 1.3 and cycle < 1000:  # arbitrary cut offs
             path = constrained_walk(start=point_0, end=point_n,
                                     n=LENGTH_OF_CHAIN)
             curr = max(calculate_wrapped_distance_full(path))[0]
@@ -312,6 +303,8 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
                 maxdist = curr
                 masterpath = path
             maxdist = min(maxdist, curr)
+        for i in range(len(masterpath)):
+            masterpath[i] = wrap_coords(masterpath[i], BOX_SIZE)
         path_x = masterpath[:, 0]
         path_y = masterpath[:, 1]
         path_z = masterpath[:, 2]
@@ -329,7 +322,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         bead_data.loc[id_range, "atom-type"] = 2
         bond_data = update_bond_list(id_range, edge, bond_data)
 
-        if maxdist > 3:
+        if maxdist > 1.3:
             plt.gca().set_aspect('equal')
             plt.show()
             print(max(calculate_wrapped_distance(path_x)),
@@ -346,11 +339,12 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 
 
 # %%
+
+# TODO: Chain ends cannot converge at small enough distances. Maybe try bond length 1, which is what Jason's code uses?
 STUDY_NAME = '20241016B1C1'
 
 [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
-FullEdges = FullEdges[0:10]
 BeadData = create_atom_list(NodeData, FullEdges)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,

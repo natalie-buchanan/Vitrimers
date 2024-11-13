@@ -26,7 +26,8 @@ def load_files(name: str, network="auelp"):
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
     # subtract 1 to get number of connecting beads from number of bonds
     len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                               '-n.dat'))) - 1
+                                               '-nu.dat'))[int(name[-1])])
+    len_of_chain -= 1
     node_files = np.asarray([core_x, core_y, node_type])
     node_files = node_files.transpose()
 
@@ -42,7 +43,10 @@ def write_LAMMPS_data(name: str, atom_data, bond_data, box_size,
         file.write("""{name}
 
 {num_atoms} atoms
-{num_bonds} bond
+{num_bonds} bonds
+                   
+3 atom types
+1 bond types
 
 0 {L_box} xlo xhi
 0 {L_box} ylo yhi
@@ -52,7 +56,7 @@ Masses\n\n""".format(name=name, num_atoms=len(atom_data),
         for i in atom_data["atom-type"].drop_duplicates().sort_values():
             file.write(f'{int(i)} 1\n')
         file.write("""
-Atoms # ID molID type x y z\n\n""")
+Atoms # full\n\n""")
         for i in atom_data.index:
             file.write(f"{int(atom_data.iloc[i]['ID']+1)} " +
                        f"{int(atom_data.iloc[i]['Mol']+1)} " +
@@ -65,8 +69,8 @@ Bonds\n\n""")
         for i in bond_data.index:
             file.write(f"{i + 1} " +
                        f"{int(bond_data.iloc[i]['BondType'])} " +
-                       f"{int(bond_data.iloc[i]['Atom1'])} " +
-                       f"{int(bond_data.iloc[i]['Atom2'])} " +
+                       f"{int(bond_data.iloc[i]['Atom1']) + 1} " +
+                       f"{int(bond_data.iloc[i]['Atom2']) + 1} " +
                        "\n")
 
 
@@ -222,29 +226,34 @@ def step_choice(i, current_point, target_point, bead_positions, n):
 
 def constrained_walk(start, end, n=15):
     """Generate atom position in a constrained walk between two nodes."""
-    [x0, xn] = wrap_coords([start[0], end[0]], BOX_SIZE)
-    [y0, yn] = wrap_coords([start[1], end[1]], BOX_SIZE)
+    # [x0, xn] = wrap_coords([start[0], end[0]], BOX_SIZE)
+    # [y0, yn] = wrap_coords([start[1], end[1]], BOX_SIZE)
+    [x0, y0] = start
+    [xn, yn] = end
+    [x0, y0] = unwrap_coords(start, end, BOX_SIZE)
     x = x0
     y = y0
-    bead_positions = np.empty((n+1, 2))
+    bead_positions = np.empty((n+2, 2))
     bead_positions[:] = np.nan
     bead_positions[0] = [x0, y0]
     bead_positions[-1] = [xn, yn]
 
-    for i in range(int(n+2/2)):
+    for i in range(int((n+2)/2)):
         # Step from starting side
         current_point = x, y
         target_point = xn, yn
-        current_point = unwrap_coords(current_point, target_point, BOX_SIZE)
+        # current_point = unwrap_coords(current_point, target_point, BOX_SIZE)
         x, y = step_choice(i, current_point, target_point,
                               bead_positions, n)
-        bead_positions[i+1] = wrap_coords([x, y], BOX_SIZE)
+        bead_positions[i + 1] = [x, y]
+        # bead_positions[i+1] = wrap_coords([x, y], BOX_SIZE)
         # Step from ending side
         current_point = xn, yn
         target_point = x, y
         xn, yn = step_choice(i, current_point, target_point,
                                  bead_positions, n)
-        bead_positions[n + 1 - i] = wrap_coords([xn, yn], BOX_SIZE)
+        bead_positions[n - (i + 1)] = [xn, yn]
+        # bead_positions[n + 1 - i] = wrap_coords([xn, yn], BOX_SIZE)
     return bead_positions[1:-1]
 
 
@@ -255,7 +264,6 @@ def calculate_wrapped_distance(array):
 
     for i in range(0, num_rows - 1, 1):
         new_row1 = unwrap_coords(array[i], array[i + 1], BOX_SIZE)
-
         # Calculate the difference between new_row1 and row i+1
         diff = abs(new_row1 - array[i + 1])
         results[i] = diff
@@ -322,6 +330,8 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
                 maxdist = curr
                 masterpath = path
             maxdist = min(maxdist, curr)
+        for i in range(len(masterpath)):
+            masterpath[i] = wrap_coords(masterpath[i], BOX_SIZE)
         path_x = masterpath[:, 0]
         path_y = masterpath[:, 1]
         fullcycle.iloc[chain] = [cycle, maxdist]
@@ -357,7 +367,6 @@ STUDY_NAME = '20241016B1C1'
 
 [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
 FullEdges = np.concatenate((Edges, PB_edges))
-FullEdges = FullEdges[0:10]
 BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,
@@ -385,7 +394,9 @@ plt.scatter(BeadData[BeadData['Mol'] == 0]["X"],
 plt.plot(BeadData[BeadData['Mol'] == 10]["X"],
         BeadData[BeadData['Mol'] == 10]["Y"],
         marker='.')
+plt.title('10')
 plt.show()
+
 
 # %%
 colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
@@ -400,4 +411,5 @@ plt.figure()
 plt.plot(tester["X"],tester["Y"],marker='.')
 plt.scatter(Node[0], Node[1], c='k', marker='o')
 plt.scatter(Node2[0], Node2[1], c='k', marker='*')
+plt.title('Unwrapped')
 plt.show()
