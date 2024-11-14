@@ -35,6 +35,47 @@ def load_files(name: str, network="auelp"):
     return [node_files, edges, pb_edges, box_size, len_of_chain]
 
 
+def write_LAMMPS_data(name: str, atom_data, bond_data, box_size,
+                      network="auelp"):
+    """Write LAMMPS in.data file including positions and bonds."""
+    base_path = os.path.join(os.getcwd(), "Data", network)
+    data_file = os.path.join(base_path, name + '-in.data')
+    with open(data_file, "w",  encoding="utf-8") as file:
+        file.write("""{name}
+
+{num_atoms} atoms
+{num_bonds} bonds
+                   
+3 atom types
+1 bond types
+
+0 {L_box} xlo xhi
+0 {L_box} ylo yhi
+0 {L_box} zlo zhi
+
+Masses\n\n""".format(name=name, num_atoms=len(atom_data),
+                   num_bonds=len(bond_data), L_box=box_size))
+        for i in atom_data["atom-type"].drop_duplicates().sort_values():
+            file.write(f'{int(i)} 1\n')
+        file.write("""
+Atoms # full\n\n""")
+        for i in atom_data.index:
+            file.write(f"{int(atom_data.iloc[i]['ID']+1)} " +
+                       f"{int(atom_data.iloc[i]['Mol']+1)} " +
+                       f"{int(atom_data.iloc[i]['atom-type'])} " +
+                       f"{atom_data.iloc[i]['X']} " +
+                       f"{atom_data.iloc[i]['Y']} " +
+                       f"{atom_data.iloc[i]['Z']} " + "\n")
+        file.write("""
+Bonds\n\n""")
+        for i in bond_data.index:
+            file.write(f"{i + 1} " +
+                       f"{int(bond_data.iloc[i]['BondType'])} " +
+                       f"{int(bond_data.iloc[i]['Atom1']) + 1} " +
+                       f"{int(bond_data.iloc[i]['Atom2']) + 1} " +
+                       "\n")
+            
+
 def create_neighborhood(x, y, z, factor=1, number=9):
     """Create neighborhood."""
     points = []
@@ -197,12 +238,16 @@ def constrained_walk(start, end, n=15):
     x = x0
     y = y0
     z = z0
-    bead_positions = np.empty((n+1, 3))
+    bead_positions = np.empty((n+2, 3))
     bead_positions[:] = np.nan
     bead_positions[0] = [x0, y0, z0]
     bead_positions[-1] = [xn, yn, zn]
+    test = np.zeros_like(bead_positions)
+    test[:,0] = np.arange(0, n + 2)
+    test[0,1] = 0.05
+    test[-1,1] = 0.05
 
-    for i in range(int(n/2)):
+    for i in range(int(n/2)+1):
         # Step from starting side
         current_point = x, y, z
         target_point = xn, yn, zn
@@ -210,13 +255,14 @@ def constrained_walk(start, end, n=15):
         x, y, z = step_choice(i, current_point, target_point,
                               bead_positions, n)
         bead_positions[i+1] = [x, y, z]
-        # bead_positions[i+1] = wrap_coords([x, y, z], BOX_SIZE)
+        test[i+1, 1] = (i+1)
         # Step from ending side
         current_point = xn, yn, zn
         target_point = x, y, zn
         xn, yn, zn = step_choice(i, current_point, target_point,
                                  bead_positions, n)
-        bead_positions[n-(i+1)] = [xn, yn, zn]
+        bead_positions[n-i] = [xn, yn, zn]
+        test[n-i, 2] = n - i
         # bead_positions[n-i-1] = wrap_coords([xn, yn, zn], BOX_SIZE)
     return bead_positions[1:-1]
 
@@ -294,7 +340,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
                    node_z[int(edge[1])])
         maxdist = 50  # arbitrary large value to start
         cycle = 0
-        while maxdist > 1.3 and cycle < 1000:  # arbitrary cut offs
+        while maxdist > 1.3 and cycle < 100:  # arbitrary cut offs
             path = constrained_walk(start=point_0, end=point_n,
                                     n=LENGTH_OF_CHAIN)
             curr = max(calculate_wrapped_distance_full(path))[0]
@@ -322,14 +368,14 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         bead_data.loc[id_range, "atom-type"] = 2
         bond_data = update_bond_list(id_range, edge, bond_data)
 
-        if maxdist > 1.3:
-            plt.gca().set_aspect('equal')
-            plt.show()
-            print(max(calculate_wrapped_distance(path_x)),
-                  max(calculate_wrapped_distance(path_y)),
-                  max(calculate_wrapped_distance(path_z)))
-            raise ValueError('Error in chain ' + str(chain)
-                             + " Max Dist: " + str(maxdist))
+    if maxdist > 1.3:
+        plt.gca().set_aspect('equal')
+        plt.show()
+        print(max(calculate_wrapped_distance(path_x)),
+                max(calculate_wrapped_distance(path_y)),
+                max(calculate_wrapped_distance(path_z)))
+        raise ValueError('Error in chain ' + str(chain)
+                            + " Max Dist: " + str(maxdist))
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.title("Path")
@@ -339,8 +385,6 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
 
 
 # %%
-
-# TODO: Chain ends cannot converge at small enough distances. Maybe try bond length 1, which is what Jason's code uses?
 STUDY_NAME = '20241016B1C1'
 
 [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
@@ -349,6 +393,7 @@ BeadData = create_atom_list(NodeData, FullEdges)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,
                                             NodeData)
+write_LAMMPS_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
 
 # %% PLot
 colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))

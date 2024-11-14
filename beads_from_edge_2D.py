@@ -321,7 +321,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         point_n = (node_x[int(edge[1])], node_y[int(edge[1])])
         maxdist = 50  # arbitrary large value to start
         cycle = 0
-        while maxdist > 1 and cycle < 25:  # arbitrary cut offs
+        while maxdist > 1.1 and cycle < 50:  # arbitrary cut offs
             path = constrained_walk(start=point_0, end=point_n,
                                     n=LENGTH_OF_CHAIN)
             curr = max(calculate_wrapped_distance_full(path))[0]
@@ -336,7 +336,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         path_y = masterpath[:, 1]
         fullcycle.iloc[chain] = [cycle, maxdist]
         plt.scatter(path_x, path_y, color=colors[chain], marker='o')
-        # ax.plot(path_x, path_y, path_z, color=colors[chain], linestyle='-')
+        plt.plot(path_x, path_y, color=colors[chain], linestyle='-')
         plt.scatter(point_0[0], point_0[1], color='k', marker='>')
         plt.scatter(point_n[0], point_n[1], color='k', marker='>')
         id_range = np.arange(len(node_x) + (chain * len(path_x)),
@@ -347,13 +347,13 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         bead_data.loc[id_range, "atom-type"] = 2
         bond_data = update_bond_list(id_range, edge, bond_data)
 
-        if maxdist > 3:
-            plt.gca().set_aspect('equal')
-            plt.show()
-            print(max(calculate_wrapped_distance(path_x)),
-                  max(calculate_wrapped_distance(path_y)))
-            raise ValueError('Error in chain ' + str(chain)
-                             + " Max Dist: " + str(maxdist))
+    if maxdist > 1.1:
+        plt.gca().set_aspect('equal')
+        plt.show()
+        print(max(calculate_wrapped_distance(path_x)),
+                max(calculate_wrapped_distance(path_y)))
+        raise ValueError('Error in chain ' + str(chain)
+                            + " Max Dist: " + str(maxdist))
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.title("Path")
@@ -395,21 +395,4 @@ plt.plot(BeadData[BeadData['Mol'] == 10]["X"],
         BeadData[BeadData['Mol'] == 10]["Y"],
         marker='.')
 plt.title('10')
-plt.show()
-
-
-# %%
-colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
-node_x = NodeData[:, 0]
-node_y = NodeData[:, 1]
-Node = [node_x[int(FullEdges[-1][0])], node_y[int(FullEdges[-1][0])]]
-Node2 = [node_x[int(FullEdges[-1][1])], node_y[int(FullEdges[-1][1])]]
-Node2 = unwrap_coords(Node2, Node, BOX_SIZE)
-tester = BeadData[BeadData['Mol'] == 10][["X", "Y"]]
-tester = tester.apply(unwrap_coords, axis=1, result_type='broadcast', second_point=Node, L=BOX_SIZE)
-plt.figure()
-plt.plot(tester["X"],tester["Y"],marker='.')
-plt.scatter(Node[0], Node[1], c='k', marker='o')
-plt.scatter(Node2[0], Node2[1], c='k', marker='*')
-plt.title('Unwrapped')
 plt.show()
