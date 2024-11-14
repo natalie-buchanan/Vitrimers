@@ -26,7 +26,8 @@ def load_files(name: str, network="auelp"):
     box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
     # subtract 1 to get number of connecting beads from number of bonds
     len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                               '-n.dat'))) - 1
+                                               '-nu.dat'))[int(name[-1])])
+    len_of_chain -= 1
     node_files = np.asarray([core_x, core_y, core_z, node_type])
     node_files = node_files.transpose()
 
