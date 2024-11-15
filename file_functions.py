@@ -68,7 +68,7 @@ Masses\n\n""".format(name=name, num_atoms=len(atom_data),
         for i in atom_data["atom-type"].drop_duplicates().sort_values():
             file.write(f'{int(i)} 1\n')
         file.write("""
-Atoms # full\n\n""")
+Atoms # molecular\n\n""")
         for i in atom_data.index:
             file.write(f"{int(atom_data.iloc[i]['ID']+1)} " +
                        f"{int(atom_data.iloc[i]['Mol']+1)} " +
