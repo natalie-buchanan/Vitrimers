@@ -5,89 +5,11 @@ Created on Mon Oct 28 13:37:25 2024
 """
 
 import random
-import os
 import math
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-
-
-def load_files(name: str, network="auelp"):
-    """
-    Retrieve data from aelp-network-topology-synthesis.
-
-    Args:
-        name (str): The name of the simulation to be analyzed.
-        network (str): Type of network generated. Used for directory.
-
-    Returns:
-        list: [node_files: array, edges: array, pb_edges: array, box_size: float, len_of_chain: int]
-    """
-    base_path = os.path.join(os.getcwd(), "Data", network)
-    coords = ['x', 'y', 'z']
-
-    try:
-        core_coords = [np.loadtxt(os.path.join(base_path, f'{name}-core_{c}.dat'))
-                       for c in coords]
-        edges = np.loadtxt(os.path.join(
-            base_path, name + '-conn_core_edges.dat'))
-        pb_edges = np.loadtxt(os.path.join(
-            base_path, name + '-conn_pb_edges.dat'))
-        node_type = np.loadtxt(os.path.join(base_path, name +
-                                            '-core_node_type.dat'))
-        box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
-        len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                                   '-nu.dat'))[int(name[-1])])
-    except (FileNotFoundError, OSError) as e:
-        print(f"Error loading data files: {e}")
-        return None  # Or handle the error as appropriate
-    node_files = np.asarray([*core_coords, node_type])
-    node_files = node_files.transpose()
-    len_of_chain -= 1  # number of beads one less than number of edges
-
-    return [node_files, edges, pb_edges, box_size, len_of_chain]
-
-
-def write_lammps_data(name: str, atom_data, bond_data, box_size,
-                      network="auelp"):
-    """Write LAMMPS in.data file including positions and bonds."""
-    base_path = os.path.join(os.getcwd(), "Data", network)
-    data_file = os.path.join(base_path, name + '-in.data')
-    with open(data_file, "w",  encoding="utf-8") as file:
-        file.write("""{name}
-
-{num_atoms} atoms
-{num_bonds} bonds
-                   
-3 atom types
-1 bond types
-
-0 {L_box} xlo xhi
-0 {L_box} ylo yhi
-0 {L_box} zlo zhi
-
-Masses\n\n""".format(name=name, num_atoms=len(atom_data),
-                   num_bonds=len(bond_data), L_box=box_size))
-        for i in atom_data["atom-type"].drop_duplicates().sort_values():
-            file.write(f'{int(i)} 1\n')
-        file.write("""
-Atoms # full\n\n""")
-        for i in atom_data.index:
-            file.write(f"{int(atom_data.iloc[i]['ID']+1)} " +
-                       f"{int(atom_data.iloc[i]['Mol']+1)} " +
-                       f"{int(atom_data.iloc[i]['atom-type'])} " +
-                       f"{atom_data.iloc[i]['X']} " +
-                       f"{atom_data.iloc[i]['Y']} " +
-                       f"{atom_data.iloc[i]['Z']} " + "\n")
-        file.write("""
-Bonds\n\n""")
-        for i in bond_data.index:
-            file.write(f"{i + 1} " +
-                       f"{int(bond_data.iloc[i]['BondType'])} " +
-                       f"{int(bond_data.iloc[i]['Atom1']) + 1} " +
-                       f"{int(bond_data.iloc[i]['Atom2']) + 1} " +
-                       "\n")
 
 
 def create_neighborhood(x, y, z, factor=1, number=9):
@@ -105,7 +27,6 @@ def create_neighborhood(x, y, z, factor=1, number=9):
             if all(v == 0 for v in [xn, yn, zn]):
                 print("Here")
             points.append([xn, yn, zn])
-    points = np.array(points)
 
     return np.array(points)
 
@@ -170,9 +91,9 @@ def check_distances(first_array, second_array, distance, box_size):
     return is_close
 
 
-def check_neighborhood(neighborhood, bead_positions, cutoff=0.5):
+def check_neighborhood(neighborhood, bead_positions, box_size, cutoff=0.5):
     """Check to see if neighbors are occupied."""
-    truth = check_distances(neighborhood, bead_positions, cutoff, BOX_SIZE)
+    truth = check_distances(neighborhood, bead_positions, cutoff, box_size)
     # If all occupied, returns False, else returns neighborhood
     test = neighborhood[~truth]
     if not test.any():
@@ -180,15 +101,15 @@ def check_neighborhood(neighborhood, bead_positions, cutoff=0.5):
     return test
 
 
-def find_neighborhood(x, y, z, bead_positions):
+def find_neighborhood(x, y, z, bead_positions, box_size):
     """Create neighborhood that is not fully occupied."""
     neighborhood = create_neighborhood(x, y, z)
-    check = check_neighborhood(neighborhood, bead_positions)
+    check = check_neighborhood(neighborhood, bead_positions, box_size)
     if not isinstance(check, np.ndarray):
         print('Here')
         # generate neighborhood of points 1.5 away if all 1 away are occupied
         neighborhood = create_neighborhood(x, y, z, number=4)
-        if not isinstance(check_neighborhood(neighborhood, bead_positions),
+        if not isinstance(check_neighborhood(neighborhood, bead_positions, box_size),
                           np.ndarray):
             raise ValueError(
                 'Neighborhood full: ' + str(neighborhood))
@@ -220,13 +141,13 @@ def calculate_theta(current_point, target_point, n, i):
     return theta_x, theta_y, theta_z
 
 
-def step_choice(i, current_point, target_point, bead_positions, n):
+def step_choice(i, current_point, target_point, bead_positions, box_size, n):
     """Choose next step in constrained walk."""
     x, y, z = current_point
 
     theta = calculate_theta(current_point, target_point, n, i)
 
-    region = find_neighborhood(x, y, z, bead_positions)
+    region = find_neighborhood(x, y, z, bead_positions, box_size)
     rows = np.any(region != 0, axis=1)
     region = region[rows]
     index = select_indices(theta, region, current_point)
@@ -240,11 +161,11 @@ def step_choice(i, current_point, target_point, bead_positions, n):
     return region[choice]
 
 
-def constrained_walk(start, end, n=15):
+def constrained_walk(start, end, box_size, n=15):
     """Generate atom position in a constrained walk between two nodes."""
     [x0, y0, z0] = start
     [xn, yn, zn] = end
-    [x0, y0, z0] = unwrap_coords(start, end, BOX_SIZE)
+    [x0, y0, z0] = unwrap_coords(start, end, box_size)
     x = x0
     y = y0
     z = z0
@@ -257,26 +178,26 @@ def constrained_walk(start, end, n=15):
         # Step from starting side
         current_point = x, y, z
         target_point = xn, yn, zn
-        current_point = unwrap_coords(current_point, target_point, BOX_SIZE)
+        current_point = unwrap_coords(current_point, target_point, box_size)
         x, y, z = step_choice(i, current_point, target_point,
-                              bead_positions, n)
+                              bead_positions, box_size, n)
         bead_positions[i+1] = [x, y, z]
         # Step from ending side
         current_point = xn, yn, zn
         target_point = x, y, zn
         xn, yn, zn = step_choice(i, current_point, target_point,
-                                 bead_positions, n)
+                                 bead_positions, box_size, n)
         bead_positions[n-i] = [xn, yn, zn]
     return bead_positions[1:-1]
 
 
-def calculate_wrapped_distance(array):
+def calculate_wrapped_distance(array, box_size):
     """Calculate the shortest distance between two points"""
     num_rows = array.shape[0]
     results = np.zeros_like(array)
 
     for i in range(0, num_rows - 1, 1):
-        new_row1 = unwrap_coords(array[i], array[i + 1], BOX_SIZE)
+        new_row1 = unwrap_coords(array[i], array[i + 1], box_size)
 
         # Calculate the difference between new_row1 and row i+1
         diff = abs(new_row1 - array[i + 1])
@@ -285,24 +206,24 @@ def calculate_wrapped_distance(array):
     return np.array(results)
 
 
-def calculate_wrapped_distance_full(array):
+def calculate_wrapped_distance_full(array, box_size):
     """Calculate actual distance, not difference."""
     num_rows = array.shape[0]
     results = np.zeros((num_rows, 1))
     for i in range(0, num_rows - 1, 1):
-        new_row = unwrap_coords(array[i], array[i+1], BOX_SIZE)
+        new_row = unwrap_coords(array[i], array[i+1], box_size)
         results[i] = math.sqrt((new_row[0]-array[i + 1, 0])**2 +
                                (new_row[1] - array[i + 1, 1])**2 +
                                (new_row[2] - array[i + 1, 2])**2)
     return results
 
 
-def create_atom_list(node_data, edge_data):
+def create_atom_list(node_data, edge_data, len_of_chain):
     """Create panda Data Frame of generated positions and nodes."""
     [x_data, y_data, z_data, node_type] = [node_data[:, 0], node_data[:, 1],
                                            node_data[:, 2], node_data[:, 3]]
     atom_list = pd.DataFrame(data={'ID':
-                                   np.arange(0, ((LENGTH_OF_CHAIN) *
+                                   np.arange(0, ((len_of_chain) *
                                                  len(edge_data) +
                                                  len(x_data)), 1),
                                    'X': np.nan, 'Y': np.nan, 'Z': np.nan,
@@ -335,7 +256,7 @@ def update_bead_list(bead_data, bead_ids, path, chain):
     return bead_data
 
 
-def generate_chain_path(point_0, point_n, cutoff):
+def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
     """Try to generate chain path within a number of cycles 
     where middle beads are within a cutoff distance."""
     maxdist = 50  # arbitrary large value to start
@@ -343,19 +264,19 @@ def generate_chain_path(point_0, point_n, cutoff):
     masterpath = np.empty((1, 1))
     while maxdist > cutoff and cycle < 100:  # arbitrary cut offs
         path = constrained_walk(start=point_0, end=point_n,
-                                n=LENGTH_OF_CHAIN)
-        curr = max(calculate_wrapped_distance_full(path))[0]
+                                box_size=box_size, n=len_of_chain)
+        curr = max(calculate_wrapped_distance_full(path, box_size))[0]
         cycle += 1
         if curr < maxdist:
             maxdist = curr
             masterpath = path
         maxdist = min(maxdist, curr)
     for i, coords in enumerate(masterpath):
-        masterpath[i] = wrap_coords(coords, BOX_SIZE)
+        masterpath[i] = wrap_coords(coords, box_size)
     return masterpath, maxdist, cycle
 
 
-def create_chains(full_edge_data, bond_data, bead_data, node_data):
+def create_chains(full_edge_data, bond_data, bead_data, node_data, box_size, len_of_chain):
     """Create chains."""
     dist_cutoff = 1.3
     colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(full_edge_data)))
@@ -372,7 +293,7 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
         point_n = (node_data[int(edge[1]), 0], node_data[int(edge[1]), 1],
                    node_data[int(edge[1]), 2])
         masterpath, maxdist, cycle = generate_chain_path(
-            point_0, point_n, dist_cutoff)
+            point_0, point_n, dist_cutoff, len_of_chain, box_size)
 
         id_range = np.arange(len(node_data) + (chain * len(masterpath)),
                              len(node_data) + ((chain + 1) * len(masterpath)))
@@ -388,9 +309,9 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
     if maxdist > dist_cutoff:
         plt.gca().set_aspect('equal')
         plt.show()
-        print(max(calculate_wrapped_distance(masterpath[:, 0])),
-              max(calculate_wrapped_distance(masterpath[:, 1])),
-              max(calculate_wrapped_distance(masterpath[:, 2])))
+        print(max(calculate_wrapped_distance(masterpath[:, 0], box_size)),
+              max(calculate_wrapped_distance(masterpath[:, 1], box_size)),
+              max(calculate_wrapped_distance(masterpath[:, 2], box_size)))
         raise ValueError('Error in chain ' + str(chain)
                          + " Max Dist: " + str(maxdist))
     plt.xlabel("X")
@@ -399,15 +320,3 @@ def create_chains(full_edge_data, bond_data, bead_data, node_data):
     plt.gca().set_aspect('equal')
     plt.show()
     return bead_data, bond_data, fullcycle
-
-
-# %%
-STUDY_NAME = '20241016B1C1'
-
-[NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
-FullEdges = np.concatenate((Edges, PB_edges))
-BeadData = create_atom_list(NodeData, FullEdges)
-BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
-BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,
-                                            NodeData)
-write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
