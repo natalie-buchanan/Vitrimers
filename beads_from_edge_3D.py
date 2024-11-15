@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 Created on Mon Oct 28 13:37:25 2024
 
@@ -15,27 +14,42 @@ import matplotlib as mpl
 
 
 def load_files(name: str, network="auelp"):
-    """Load data from files core_x, core_y, and edges."""
+    """
+    Retrieve data from aelp-network-topology-synthesis.
+
+    Args:
+        name (str): The name of the simulation to be analyzed.
+        network (str): Type of network generated. Used for directory.
+
+    Returns:
+        list: [node_files: array, edges: array, pb_edges: array, box_size: float, len_of_chain: int]
+    """
     base_path = os.path.join(os.getcwd(), "Data", network)
-    core_x = np.loadtxt(os.path.join(base_path, name + '-core_x.dat'))
-    core_y = np.loadtxt(os.path.join(base_path, name + '-core_y.dat'))
-    core_z = np.loadtxt(os.path.join(base_path, name + '-core_z.dat'))
-    edges = np.loadtxt(os.path.join(base_path, name + '-conn_core_edges.dat'))
-    pb_edges = np.loadtxt(os.path.join(base_path, name + '-conn_pb_edges.dat'))
-    node_type = np.loadtxt(os.path.join(base_path, name +
-                                        '-core_node_type.dat'))
-    box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
-    # subtract 1 to get number of connecting beads from number of bonds
-    len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                               '-nu.dat'))[int(name[-1])])
-    len_of_chain -= 1
-    node_files = np.asarray([core_x, core_y, core_z, node_type])
+    coords = ['x', 'y', 'z']
+
+    try:
+        core_coords = [np.loadtxt(os.path.join(base_path, f'{name}-core_{c}.dat'))
+                       for c in coords]
+        edges = np.loadtxt(os.path.join(
+            base_path, name + '-conn_core_edges.dat'))
+        pb_edges = np.loadtxt(os.path.join(
+            base_path, name + '-conn_pb_edges.dat'))
+        node_type = np.loadtxt(os.path.join(base_path, name +
+                                            '-core_node_type.dat'))
+        box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
+        len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
+                                                   '-nu.dat'))[int(name[-1])])
+    except (FileNotFoundError, OSError) as e:
+        print(f"Error loading data files: {e}")
+        return None  # Or handle the error as appropriate
+    node_files = np.asarray([*core_coords, node_type])
     node_files = node_files.transpose()
+    len_of_chain -= 1  # number of beads one less than number of edges
 
     return [node_files, edges, pb_edges, box_size, len_of_chain]
 
 
-def write_LAMMPS_data(name: str, atom_data, bond_data, box_size,
+def write_lammps_data(name: str, atom_data, bond_data, box_size,
                       network="auelp"):
     """Write LAMMPS in.data file including positions and bonds."""
     base_path = os.path.join(os.getcwd(), "Data", network)
@@ -74,7 +88,7 @@ Bonds\n\n""")
                        f"{int(bond_data.iloc[i]['Atom1']) + 1} " +
                        f"{int(bond_data.iloc[i]['Atom2']) + 1} " +
                        "\n")
-            
+
 
 def create_neighborhood(x, y, z, factor=1, number=9):
     """Create neighborhood."""
@@ -96,40 +110,37 @@ def create_neighborhood(x, y, z, factor=1, number=9):
     return np.array(points)
 
 
-def unwrap_coords(first_point, second_point, L):
+def unwrap_coords(first_point, second_point, box_size):
     """Unwrap pair of coordinates."""
     v1 = np.array(first_point)
     v2 = np.array(second_point)
     diff = abs(v1 - v2)
     z1 = v1.copy()
-    wrap_flag = np.zeros_like(v1)
-    wrap_flag[(diff > L/2) & (v1 < v2)] = 1
-    wrap_flag[(diff > L/2) & (v1 > v2)] = -1
-    z1[(diff > L/2) & (v1 < v2)] += L
-    z1[(diff > L/2) & (v1 > v2)] -= L
+    z1[(diff > box_size/2) & (v1 < v2)] += box_size
+    z1[(diff > box_size/2) & (v1 > v2)] -= box_size
 
     return z1
 
 
-def wrap_coords(first_point, L):
-    """Wrap pair of coordinates."""
+def wrap_coords(first_point, box_size):
+    """Wrap point into simulation box."""
     v1 = np.array(first_point, dtype='float64')
     z1 = v1.copy()
     while np.any(np.less(z1, 0)):
-        z1[z1 < 0] += L
-    while np.any(np.greater(z1, L)):
-        z1[z1 > L] -= L
+        z1[z1 < 0] += box_size
+    while np.any(np.greater(z1, box_size)):
+        z1[z1 > box_size] -= box_size
     return z1
 
 
-def check_distances(A, B, distance, box_size):
+def check_distances(first_array, second_array, distance, box_size):
     """
-    Checks if any row in array A is within a given distance of any row in array B,
+    Checks if any row in first_array is within a given distance of any row in array B,
     considering periodic boundary conditions.
 
     Args:
-        A: A NumPy array of shape (N, 3) representing the coordinates of points.
-        B: A NumPy array of shape (M, 3) representing the coordinates of other points.
+        first_array: A NumPy array of shape (N, 3) representing the coordinates of points.
+        second_array: A NumPy array of shape (M, 3) representing the coordinates of other points.
         distance: The maximum distance for a point to be considered "close".
         box_size: The size of the periodic box in each dimension (assumed to be cubic).
 
@@ -137,14 +148,14 @@ def check_distances(A, B, distance, box_size):
         A boolean array of shape (N,) indicating whether each row in A is close to any row in B.
     """
 
-    num_points_A = A.shape[0]
-    is_close = np.zeros(num_points_A, dtype=bool)
+    num_points_first = first_array.shape[0]
+    is_close = np.zeros(num_points_first, dtype=bool)
 
-    for i in range(num_points_A):
-        for j in range(B.shape[0]):
-            dx = np.abs(A[i, 0] - B[j, 0])
-            dy = np.abs(A[i, 1] - B[j, 1])
-            dz = np.abs(A[i, 2] - B[j, 2])
+    for i in range(num_points_first):
+        for j in range(second_array.shape[0]):
+            dx = np.abs(first_array[i, 0] - second_array[j, 0])
+            dy = np.abs(first_array[i, 1] - second_array[j, 1])
+            dz = np.abs(first_array[i, 2] - second_array[j, 2])
 
             # Periodic boundary conditions
             dx = np.minimum(dx, box_size - dx)
@@ -155,7 +166,7 @@ def check_distances(A, B, distance, box_size):
 
             if dist < distance:
                 is_close[i] = True
-                break  # Move to the next point in A if a close point is found
+                break  # Move to the next point in first_array if a close point is found
     return is_close
 
 
@@ -186,7 +197,6 @@ def find_neighborhood(x, y, z, bead_positions):
 
 def select_indices(theta, neighborhood, current_point):
     """Select indices based on theta and neighborhood."""
-    random.seed(42)
     valid_indices = np.where(np.any(neighborhood != 0, axis=1))[0]
     indices = np.empty([len(valid_indices), 3])
     for i in range(neighborhood.shape[1]):
@@ -242,10 +252,6 @@ def constrained_walk(start, end, n=15):
     bead_positions[:] = np.nan
     bead_positions[0] = [x0, y0, z0]
     bead_positions[-1] = [xn, yn, zn]
-    test = np.zeros_like(bead_positions)
-    test[:,0] = np.arange(0, n + 2)
-    test[0,1] = 0.05
-    test[-1,1] = 0.05
 
     for i in range(int(n/2)+1):
         # Step from starting side
@@ -255,20 +261,17 @@ def constrained_walk(start, end, n=15):
         x, y, z = step_choice(i, current_point, target_point,
                               bead_positions, n)
         bead_positions[i+1] = [x, y, z]
-        test[i+1, 1] = (i+1)
         # Step from ending side
         current_point = xn, yn, zn
         target_point = x, y, zn
         xn, yn, zn = step_choice(i, current_point, target_point,
                                  bead_positions, n)
         bead_positions[n-i] = [xn, yn, zn]
-        test[n-i, 2] = n - i
-        # bead_positions[n-i-1] = wrap_coords([xn, yn, zn], BOX_SIZE)
     return bead_positions[1:-1]
 
 
 def calculate_wrapped_distance(array):
-    """sdsd."""
+    """Calculate the shortest distance between two points"""
     num_rows = array.shape[0]
     results = np.zeros_like(array)
 
@@ -296,8 +299,8 @@ def calculate_wrapped_distance_full(array):
 
 def create_atom_list(node_data, edge_data):
     """Create panda Data Frame of generated positions and nodes."""
-    x_data, y_data, z_data, node_type = node_data[:,
-                                                  0], node_data[:, 1], node_data[:, 2], node_data[:, 3]
+    [x_data, y_data, z_data, node_type] = [node_data[:, 0], node_data[:, 1],
+                                           node_data[:, 2], node_data[:, 3]]
     atom_list = pd.DataFrame(data={'ID':
                                    np.arange(0, ((LENGTH_OF_CHAIN) *
                                                  len(edge_data) +
@@ -322,60 +325,74 @@ def update_bond_list(bead_ids, node_id, bond_list):
     return bond_list
 
 
+def update_bead_list(bead_data, bead_ids, path, chain):
+    """Update bead list with beads frm current chain."""
+    bead_data.loc[bead_ids, "X"] = path[:, 0]
+    bead_data.loc[bead_ids, "Y"] = path[:, 1]
+    bead_data.loc[bead_ids, "Z"] = path[:, 2]
+    bead_data.loc[bead_ids, "Mol"] = chain + 1
+    bead_data.loc[bead_ids, "atom-type"] = 2
+    return bead_data
+
+
+def generate_chain_path(point_0, point_n, cutoff):
+    """Try to generate chain path within a number of cycles 
+    where middle beads are within a cutoff distance."""
+    maxdist = 50  # arbitrary large value to start
+    cycle = 0
+    masterpath = np.empty((1, 1))
+    while maxdist > cutoff and cycle < 100:  # arbitrary cut offs
+        path = constrained_walk(start=point_0, end=point_n,
+                                n=LENGTH_OF_CHAIN)
+        curr = max(calculate_wrapped_distance_full(path))[0]
+        cycle += 1
+        if curr < maxdist:
+            maxdist = curr
+            masterpath = path
+        maxdist = min(maxdist, curr)
+    for i, coords in enumerate(masterpath):
+        masterpath[i] = wrap_coords(coords, BOX_SIZE)
+    return masterpath, maxdist, cycle
+
+
 def create_chains(full_edge_data, bond_data, bead_data, node_data):
     """Create chains."""
-    [node_x, node_y, node_z, node_type] = [node_data[:, 0], node_data[:, 1],
-                                           node_data[:, 2], node_data[:, 3]]
+    dist_cutoff = 1.3
     colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(full_edge_data)))
     fig = plt.figure()
     ax = fig.add_subplot(projection='3d')
+
     fullcycle = pd.DataFrame(data=np.zeros([len(full_edge_data), 2]),
                              columns=["Cycles", "Max Dist"])
-
+    chain = -1
     for chain, edge in enumerate(full_edge_data):
         print(chain)
-        point_0 = (node_x[int(edge[0])], node_y[int(edge[0])],
-                   node_z[int(edge[0])])
-        point_n = (node_x[int(edge[1])], node_y[int(edge[1])],
-                   node_z[int(edge[1])])
-        maxdist = 50  # arbitrary large value to start
-        cycle = 0
-        while maxdist > 1.3 and cycle < 100:  # arbitrary cut offs
-            path = constrained_walk(start=point_0, end=point_n,
-                                    n=LENGTH_OF_CHAIN)
-            curr = max(calculate_wrapped_distance_full(path))[0]
-            cycle += 1
-            if curr < maxdist:
-                maxdist = curr
-                masterpath = path
-            maxdist = min(maxdist, curr)
-        for i in range(len(masterpath)):
-            masterpath[i] = wrap_coords(masterpath[i], BOX_SIZE)
-        path_x = masterpath[:, 0]
-        path_y = masterpath[:, 1]
-        path_z = masterpath[:, 2]
-        fullcycle.iloc[chain] = [cycle, maxdist]
-        ax.scatter(path_x, path_y, path_z, color=colors[chain], marker='o')
-        # ax.plot(path_x, path_y, path_z, color=colors[chain], linestyle='-')
-        ax.scatter(point_0[0], point_0[1], point_0[2], color='k', marker='>')
-        ax.scatter(point_n[0], point_n[1], point_n[2], color='k', marker='>')
-        id_range = np.arange(len(node_x) + (chain * len(path_x)),
-                             len(node_x) + ((chain + 1) * len(path_x)))
-        bead_data.loc[id_range, "X"] = path_x
-        bead_data.loc[id_range, "Y"] = path_y
-        bead_data.loc[id_range, "Z"] = path_z
-        bead_data.loc[id_range, "Mol"] = chain + 1
-        bead_data.loc[id_range, "atom-type"] = 2
+        point_0 = (node_data[int(edge[0]), 0], node_data[int(edge[0]), 1],
+                   node_data[int(edge[0]), 2])
+        point_n = (node_data[int(edge[1]), 0], node_data[int(edge[1]), 1],
+                   node_data[int(edge[1]), 2])
+        masterpath, maxdist, cycle = generate_chain_path(
+            point_0, point_n, dist_cutoff)
+
+        id_range = np.arange(len(node_data) + (chain * len(masterpath)),
+                             len(node_data) + ((chain + 1) * len(masterpath)))
+        bead_data = update_bead_list(bead_data, id_range, masterpath, chain)
         bond_data = update_bond_list(id_range, edge, bond_data)
 
-    if maxdist > 1.3:
+        fullcycle.iloc[chain] = [cycle, maxdist]
+        ax.scatter(masterpath[:, 0], masterpath[:, 1], masterpath[:, 2],
+                   color=colors[chain], marker='o')
+        ax.scatter(point_0[0], point_0[1], point_0[2], color='k', marker='>')
+        ax.scatter(point_n[0], point_n[1], point_n[2], color='k', marker='>')
+
+    if maxdist > dist_cutoff:
         plt.gca().set_aspect('equal')
         plt.show()
-        print(max(calculate_wrapped_distance(path_x)),
-                max(calculate_wrapped_distance(path_y)),
-                max(calculate_wrapped_distance(path_z)))
+        print(max(calculate_wrapped_distance(masterpath[:, 0])),
+              max(calculate_wrapped_distance(masterpath[:, 1])),
+              max(calculate_wrapped_distance(masterpath[:, 2])))
         raise ValueError('Error in chain ' + str(chain)
-                            + " Max Dist: " + str(maxdist))
+                         + " Max Dist: " + str(maxdist))
     plt.xlabel("X")
     plt.ylabel("Y")
     plt.title("Path")
@@ -393,34 +410,4 @@ BeadData = create_atom_list(NodeData, FullEdges)
 BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
 BeadData, BondData, runInfo = create_chains(FullEdges, BondData, BeadData,
                                             NodeData)
-write_LAMMPS_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
-
-# %% PLot
-colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
-fig = plt.figure()
-ax = fig.add_subplot(projection='3d')
-# ax.scatter(BeadData[BeadData['Mol'] == 0]["X"],
-#            BeadData[BeadData['Mol'] == 0]["Y"],
-#            BeadData[BeadData['Mol'] == 0]["Z"],
-#            marker='>', color='k')
-ax.scatter(BeadData[BeadData['Mol'] == 10]["X"],
-           BeadData[BeadData['Mol'] == 10]["Y"],
-           BeadData[BeadData['Mol'] == 10]["Z"],
-           marker='.', c=colors[BeadData['Mol'] == 10], alpha=0.7)
-
-plt.show()
-
-
-colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(BeadData)))
-fig = plt.figure()
-ax = fig.add_subplot(projection='3d')
-ax.scatter(BeadData[BeadData['Mol'] == 0]["X"],
-           BeadData[BeadData['Mol'] == 0]["Y"],
-           BeadData[BeadData['Mol'] == 0]["Z"],
-           marker='>', color='k')
-ax.plot(BeadData[BeadData['Mol'] == 10]["X"],
-        BeadData[BeadData['Mol'] == 10]["Y"],
-        BeadData[BeadData['Mol'] == 10]["Z"],
-        marker='.')
-
-plt.show()
+write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
