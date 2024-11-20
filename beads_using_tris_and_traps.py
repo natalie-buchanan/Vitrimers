@@ -15,7 +15,6 @@ from beads_from_edge_3d import create_atom_list
 
 # %%
 
-
 def adjust_coordinates_periodic(start, end, box_size):
     """ Adjust coordinates to account for periodic boundary conditions.
 

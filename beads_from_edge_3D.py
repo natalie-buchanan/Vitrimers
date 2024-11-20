@@ -6,122 +6,172 @@ Created on Mon Oct 28 13:37:25 2024
 
 import random
 import math
+import multiprocessing
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib as mpl
+from tqdm import tqdm  # progress bar
+from file_functions import load_files, write_lammps_data
 
 
-def create_neighborhood(x, y, z, factor=1, number=9):
-    """Create neighborhood."""
+def unwrap_coords(first_point, second_point, box_size):
+    """Adjust first coordinates to minize distance, accounting for periodic boundary conditions.
+
+    Args:
+        first_point (tuple): x, y, z coordinates (floats) of first point
+        second_point (tuple): x, y, z coordinates (floats) of first point
+        box_size (float): length of simulation box, assumes cubic
+
+    Returns:
+        np.array: adjusted x, y, z coordinates of first point
+    """
+    first_point = np.array(first_point)
+    second_point = np.array(second_point)
+    diff = abs(first_point - second_point)
+    adjusted_first_point = first_point.copy()
+
+    adjusted_first_point[(diff > box_size/2) & (first_point < second_point)] += box_size
+    adjusted_first_point[(diff > box_size/2) & (first_point > second_point)] -= box_size
+
+    return adjusted_first_point
+
+
+def wrap_coords(point, box_size):
+    """Adjust coordinates to be within simulation box.
+
+    Args:
+        point (np.array): x, y, z, coordinates of point
+        box_size (float): length of side of cubic simulation box
+
+    Returns:
+        np.array: adjusted x, y, z coodinates of point
+    """
+    adjusted_point = np.array(point, dtype='float64') % box_size
+    return adjusted_point
+
+
+def create_neighborhood(x, y, z, distance=1, intervals=9):
+    """Create neighborhood at intervals of phi and theta
+
+    Args:
+        x (np.float): x coordinate of current bead
+        y (np.float): y coordinate of current bead
+        z (np.float): z cooedinate
+        distance (int, optional): Bond length. Defaults to 1.
+        intervals (int, optional): Interval for phi and theta. Defaults to 9.
+
+    Returns:
+        np.array: x, y, z coordinates for all neighbors
+    """
     points = []
-    # Adjust number for finer granularity
-    for theta in np.linspace(0, 2*np.pi, number):
-        # Adjust number for finer granularity
-        for phi in np.linspace(0, np.pi, number):
+    # Adjust intervals for finer granularity
+    for theta in np.linspace(0, 2*np.pi, intervals):
+        for phi in np.linspace(0, np.pi, intervals):
 
-            xn = x + factor * np.sin(phi) * np.cos(theta)
-            yn = y + factor * np.sin(phi) * np.sin(theta)
-            zn = z + factor * np.cos(phi)
+            xn = x + distance * np.sin(phi) * np.cos(theta)
+            yn = y + distance * np.sin(phi) * np.sin(theta)
+            zn = z + distance * np.cos(phi)
 
-            if all(v == 0 for v in [xn, yn, zn]):
-                print("Here")
             points.append([xn, yn, zn])
 
     return np.array(points)
 
 
-def unwrap_coords(first_point, second_point, box_size):
-    """Unwrap pair of coordinates."""
-    v1 = np.array(first_point)
-    v2 = np.array(second_point)
-    diff = abs(v1 - v2)
-    z1 = v1.copy()
-    z1[(diff > box_size/2) & (v1 < v2)] += box_size
-    z1[(diff > box_size/2) & (v1 > v2)] -= box_size
-
-    return z1
-
-
-def wrap_coords(first_point, box_size):
-    """Wrap point into simulation box."""
-    v1 = np.array(first_point, dtype='float64')
-    z1 = v1.copy()
-    while np.any(np.less(z1, 0)):
-        z1[z1 < 0] += box_size
-    while np.any(np.greater(z1, box_size)):
-        z1[z1 > box_size] -= box_size
-    return z1
-
-
-def check_distances(first_array, second_array, distance, box_size):
+def check_distances(first_array, second_array, cutoff, box_size):
     """
-    Checks if any row in first_array is within a given distance of any row in array B,
+    Check if any row in first_array is within a given distance of any row in array B,
     considering periodic boundary conditions.
 
     Args:
         first_array: A NumPy array of shape (N, 3) representing the coordinates of points.
         second_array: A NumPy array of shape (M, 3) representing the coordinates of other points.
-        distance: The maximum distance for a point to be considered "close".
+        cutoff: The maximum distance for a point to be considered "close".
         box_size: The size of the periodic box in each dimension (assumed to be cubic).
 
     Returns:
         A boolean array of shape (N,) indicating whether each row in A is close to any row in B.
     """
 
-    num_points_first = first_array.shape[0]
-    is_close = np.zeros(num_points_first, dtype=bool)
+    # Calculate all pairwise distances
+    dx = np.abs(first_array[:, np.newaxis, 0] - second_array[:, 0])
+    dy = np.abs(first_array[:, np.newaxis, 1] - second_array[:, 1])
+    dz = np.abs(first_array[:, np.newaxis, 2] - second_array[:, 2])
 
-    for i in range(num_points_first):
-        for j in range(second_array.shape[0]):
-            dx = np.abs(first_array[i, 0] - second_array[j, 0])
-            dy = np.abs(first_array[i, 1] - second_array[j, 1])
-            dz = np.abs(first_array[i, 2] - second_array[j, 2])
+    # Apply periodic boundary conditions
+    dx = np.minimum(dx, box_size - dx)
+    dy = np.minimum(dy, box_size - dy)
+    dz = np.minimum(dz, box_size - dz)
 
-            # Periodic boundary conditions
-            dx = np.minimum(dx, box_size - dx)
-            dy = np.minimum(dy, box_size - dy)
-            dz = np.minimum(dz, box_size - dz)
+    # Calculate distances
+    distances = np.sqrt(dx**2 + dy**2 + dz**2)
 
-            dist = np.sqrt(dx**2 + dy**2 + dz**2)
+    # Check if any distance is less than the threshold
+    is_close = np.any(distances < cutoff, axis=1)
 
-            if dist < distance:
-                is_close[i] = True
-                break  # Move to the next point in first_array if a close point is found
     return is_close
 
 
 def check_neighborhood(neighborhood, bead_positions, box_size, cutoff=0.5):
-    """Check to see if neighbors are occupied."""
-    truth = check_distances(neighborhood, bead_positions, cutoff, box_size)
-    # If all occupied, returns False, else returns neighborhood
-    test = neighborhood[~truth]
-    if not test.any():
-        return False
-    return test
+    """Get unoccupied neighborhood.
+
+    Args:
+        neighborhood (np.array): x, y, z coordinates of all neighbors
+        bead_positions (np.array): x, y, z coordinates of current bead
+        box_size (float): length of cubic simulation box
+        cutoff (float, optional): Distance within which beads considered overlapping.
+            Defaults to 0.5.
+
+    Returns:
+        np.array: neighborhood without occupied spots, False if all full
+    """
+    occupied_neighbors = check_distances(neighborhood, bead_positions, cutoff, box_size)
+    # Selects all unoccupied spots in neighborhood
+    open_neighborhood = neighborhood[~occupied_neighbors]
+    return open_neighborhood
 
 
 def find_neighborhood(x, y, z, bead_positions, box_size):
-    """Create neighborhood that is not fully occupied."""
+    """ Find target sites for next bead, removing occupied sites.
+
+    Args:
+        x (float): x coordinate of current bead
+        y (float): y coordinate of current bead
+        z (float): z coordinate of current bead
+        bead_positions (np.array): x, y, z coordinates of beads already created for current chain
+        box_size (float): length of cubic simulation box
+
+    Raises:
+        ValueError: Initial and expanded neighborhood are fully occupied
+
+    Returns:
+        np.array: x, y, z coordinates of unoccupied neighboring sites
+    """
+    retry_interval = 4
     neighborhood = create_neighborhood(x, y, z)
-    check = check_neighborhood(neighborhood, bead_positions, box_size)
-    if not isinstance(check, np.ndarray):
-        print('Here')
-        # generate neighborhood of points 1.5 away if all 1 away are occupied
-        neighborhood = create_neighborhood(x, y, z, number=4)
-        if not isinstance(check_neighborhood(neighborhood, bead_positions, box_size),
-                          np.ndarray):
-            raise ValueError(
-                'Neighborhood full: ' + str(neighborhood))
-    return neighborhood
+    open_neighborhood = check_neighborhood(neighborhood, bead_positions, box_size)
+    if open_neighborhood.size == 0:
+        # Try different interval for neighborhood creation
+        neighborhood = create_neighborhood(x, y, z, intervals=retry_interval)
+        open_neighborhood = check_neighborhood(neighborhood, bead_positions, box_size)
+
+        if open_neighborhood.size == 0:
+            raise ValueError(f"Neighborhood full at coordinates ({x}, {y}, {z}): {neighborhood}")
+    return open_neighborhood
 
 
-def select_indices(theta, neighborhood, current_point):
-    """Select indices based on theta and neighborhood."""
-    valid_indices = np.where(np.any(neighborhood != 0, axis=1))[0]
-    indices = np.empty([len(valid_indices), 3])
-    for i in range(neighborhood.shape[1]):
-        column = neighborhood[valid_indices, 1]
+def select_indices(theta, open_neighborhood, current_point):
+    """ Select neighbors that match desired direction
+
+    Args:
+        theta (np.array): probability threshold for each direction
+        open_neighborhood (np.array): x, y, z coordinates of available neighbors
+        current_point (np.array): x, y, z coordinates of current bead
+
+    Returns:
+        np.array: list of indices 
+    """
+    indices = np.empty_like(open_neighborhood)
+    for i in range(open_neighborhood.shape[1]):
+        column = open_neighborhood[:, i]
         if random.random() < theta[i]:
             indices[:, i] = column < current_point[i]
         else:
@@ -147,18 +197,18 @@ def step_choice(i, current_point, target_point, bead_positions, box_size, n):
 
     theta = calculate_theta(current_point, target_point, n, i)
 
-    region = find_neighborhood(x, y, z, bead_positions, box_size)
-    rows = np.any(region != 0, axis=1)
-    region = region[rows]
-    index = select_indices(theta, region, current_point)
+    open_neighborhood= find_neighborhood(x, y, z, bead_positions, box_size)
+    # rows = np.any(region != 0, axis=1)
+    # region = region[rows]
+    index = select_indices(theta, open_neighborhood, current_point)
 
     row_sums = np.sum(index, axis=1)
     max_sum = np.max(row_sums)
     options = np.where(row_sums == max_sum)[0]
     choice = np.random.choice(options)
-    if not np.any(region[choice]):
+    if not np.any(open_neighborhood[choice]):
         print(choice)
-    return region[choice]
+    return open_neighborhood[choice]
 
 
 def constrained_walk(start, end, box_size, n=15):
@@ -275,48 +325,71 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
         masterpath[i] = wrap_coords(coords, box_size)
     return masterpath, maxdist, cycle
 
+def generate_and_update(**kwargs):
+    """Helper function to generate and update chain data."""
+    edge = kwargs['edge']
+    chain_index = kwargs['chain_index']
+    bond_data = kwargs['bond_data']
+    bead_data = kwargs['bead_data']
+    node_data = kwargs['node_data']
+    box_size = kwargs['box_size']
+    len_of_chain = kwargs['len_of_chain']
 
-def create_chains(full_edge_data, bond_data, bead_data, node_data, box_size, len_of_chain):
-    """Create chains."""
-    dist_cutoff = 1.3
-    colors = mpl.colormaps['rainbow'](np.linspace(0, 1, len(full_edge_data)))
-    fig = plt.figure()
-    ax = fig.add_subplot(projection='3d')
+    point_0 = (node_data[int(edge[0]), 0], node_data[int(edge[0]), 1], node_data[int(edge[0]), 2])
+    point_n = (node_data[int(edge[1]), 0], node_data[int(edge[1]), 1], node_data[int(edge[1]), 2])
 
-    fullcycle = pd.DataFrame(data=np.zeros([len(full_edge_data), 2]),
-                             columns=["Cycles", "Max Dist"])
-    chain = -1
-    for chain, edge in enumerate(full_edge_data):
-        print(chain)
-        point_0 = (node_data[int(edge[0]), 0], node_data[int(edge[0]), 1],
-                   node_data[int(edge[0]), 2])
-        point_n = (node_data[int(edge[1]), 0], node_data[int(edge[1]), 1],
-                   node_data[int(edge[1]), 2])
-        masterpath, maxdist, cycle = generate_chain_path(
-            point_0, point_n, dist_cutoff, len_of_chain, box_size)
+    masterpath, maxdist, cycle = generate_chain_path(point_0, point_n, 1.3, len_of_chain, box_size)
 
-        id_range = np.arange(len(node_data) + (chain * len(masterpath)),
-                             len(node_data) + ((chain + 1) * len(masterpath)))
-        bead_data = update_bead_list(bead_data, id_range, masterpath, chain)
-        bond_data = update_bond_list(id_range, edge, bond_data)
+    id_range = np.arange(len(node_data) + (chain_index * len(masterpath)),
+                         len(node_data) + ((chain_index + 1) * len(masterpath)))
+    bead_data_updated = update_bead_list(bead_data.copy(), id_range, masterpath, chain_index)
+    bond_data_updated = update_bond_list(id_range, edge, bond_data)
 
-        fullcycle.iloc[chain] = [cycle, maxdist]
-        ax.scatter(masterpath[:, 0], masterpath[:, 1], masterpath[:, 2],
-                   color=colors[chain], marker='o')
-        ax.scatter(point_0[0], point_0[1], point_0[2], color='k', marker='>')
-        ax.scatter(point_n[0], point_n[1], point_n[2], color='k', marker='>')
+    return bead_data_updated, bond_data_updated, cycle, maxdist
 
-    if maxdist > dist_cutoff:
-        plt.gca().set_aspect('equal')
-        plt.show()
-        print(max(calculate_wrapped_distance(masterpath[:, 0], box_size)),
-              max(calculate_wrapped_distance(masterpath[:, 1], box_size)),
-              max(calculate_wrapped_distance(masterpath[:, 2], box_size)))
-        raise ValueError('Error in chain ' + str(chain)
-                         + " Max Dist: " + str(maxdist))
-    plt.xlabel("X")
-    plt.ylabel("Y")
-    plt.title("Path")
-    plt.gca().set_aspect('equal')
-    plt.show()
-    return bead_data, bond_data, fullcycle
+
+def generate_wrapper(task):
+    """Wrapper for multiprocessing chain creation."""
+    return generate_and_update(**task)
+
+
+def create_chain_parallel(full_edge_data, bond_data, bead_data, node_data, box_size,
+                          len_of_chain, num_processes):
+    """Create chains in parallel."""
+    with multiprocessing.Pool(processes=num_processes) as pool:
+        common_kwargs = {  # Common arguments for all calls
+            'bond_data': bond_data,
+            'bead_data': bead_data,
+            'node_data': node_data,
+            'box_size': box_size,
+            'len_of_chain': len_of_chain
+            }
+        tasks = [{'edge': edge, 'chain_index': i, **common_kwargs}
+                 for i, edge in enumerate(full_edge_data)]
+        results = list(tqdm(pool.imap_unordered(generate_wrapper, tasks),  # Use the wrapper
+                                total=len(full_edge_data),
+                                desc="Generating Chains"))
+
+    _, _, cycles, maxdists = zip(*results)
+    run_info_array = np.column_stack((cycles, maxdists))
+
+    # Update bond_data and bead_data based on results
+    for bead_data_updated, bond_data_updated, _, _ in results:
+        bead_data.update(bead_data_updated)
+        bond_data = pd.concat([bond_data, bond_data_updated], ignore_index=True)
+
+    return bead_data, bond_data, run_info_array
+
+
+if __name__ == '__main__':
+    STUDY_NAME = '20241120B1C1'
+    COORDS = ['x', 'y', 'z']
+    cpu_num = 1 # int(np.floor(multiprocessing.cpu_count()/2))
+
+    [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME, COORDS)
+    FullEdges = np.concatenate((Edges, PB_edges))
+    BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
+    BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
+    BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BondData, BeadData,
+                                                NodeData, BOX_SIZE, LENGTH_OF_CHAIN, cpu_num)
+    write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
