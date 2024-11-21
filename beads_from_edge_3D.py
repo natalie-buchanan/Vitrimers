@@ -5,7 +5,6 @@ Created on Mon Oct 28 13:37:25 2024
 """
 
 import random
-import math
 import multiprocessing
 import pandas as pd
 import numpy as np
@@ -29,8 +28,10 @@ def unwrap_coords(first_point, second_point, box_size):
     diff = abs(first_point - second_point)
     adjusted_first_point = first_point.copy()
 
-    adjusted_first_point[(diff > box_size/2) & (first_point < second_point)] += box_size
-    adjusted_first_point[(diff > box_size/2) & (first_point > second_point)] -= box_size
+    adjusted_first_point[(diff > box_size/2) &
+                         (first_point < second_point)] += box_size
+    adjusted_first_point[(diff > box_size/2) &
+                         (first_point > second_point)] -= box_size
 
     return adjusted_first_point
 
@@ -123,19 +124,18 @@ def check_neighborhood(neighborhood, bead_positions, box_size, cutoff=0.5):
     Returns:
         np.array: neighborhood without occupied spots, False if all full
     """
-    occupied_neighbors = check_distances(neighborhood, bead_positions, cutoff, box_size)
+    occupied_neighbors = check_distances(
+        neighborhood, bead_positions, cutoff, box_size)
     # Selects all unoccupied spots in neighborhood
     open_neighborhood = neighborhood[~occupied_neighbors]
     return open_neighborhood
 
 
-def find_neighborhood(x, y, z, bead_positions, box_size):
+def find_neighborhood(current_coordinate, bead_positions, box_size):
     """ Find target sites for next bead, removing occupied sites.
 
     Args:
-        x (float): x coordinate of current bead
-        y (float): y coordinate of current bead
-        z (float): z coordinate of current bead
+        current_coordinate (tuple): x, y, z coordinates of current bead
         bead_positions (np.array): x, y, z coordinates of beads already created for current chain
         box_size (float): length of cubic simulation box
 
@@ -145,16 +145,20 @@ def find_neighborhood(x, y, z, bead_positions, box_size):
     Returns:
         np.array: x, y, z coordinates of unoccupied neighboring sites
     """
+    x, y, z = current_coordinate
     retry_interval = 4
     neighborhood = create_neighborhood(x, y, z)
-    open_neighborhood = check_neighborhood(neighborhood, bead_positions, box_size)
+    open_neighborhood = check_neighborhood(
+        neighborhood, bead_positions, box_size)
     if open_neighborhood.size == 0:
         # Try different interval for neighborhood creation
         neighborhood = create_neighborhood(x, y, z, intervals=retry_interval)
-        open_neighborhood = check_neighborhood(neighborhood, bead_positions, box_size)
+        open_neighborhood = check_neighborhood(
+            neighborhood, bead_positions, box_size)
 
         if open_neighborhood.size == 0:
-            raise ValueError(f"Neighborhood full at coordinates ({x}, {y}, {z}): {neighborhood}")
+            raise ValueError(f"Neighborhood full at coordinates ({
+                             x}, {y}, {z}): {neighborhood}")
     return open_neighborhood
 
 
@@ -179,11 +183,22 @@ def select_indices(theta, open_neighborhood, current_point):
     return indices
 
 
-def calculate_theta(current_point, target_point, n, i):
-    """Calculate chance of moving in positive or negative direction."""
+def calculate_theta(current_point, target_point, number_of_beads, i):
+    """Calcaulate change of moving in positive or negative direction.
+
+    Args:
+        current_point (np.array): x, y, z coordinates of current bead
+        target_point (np.array): x, y, z, coordinate of last bead built on other side of chain
+        number_of_beads (int): total number of beads in the chain, excluding nodes
+        i (int): Number of beads current side is away from node
+
+    Returns:
+        tuple: theta_x, theta_y, theta_z
+    """
     x, y, z = current_point
     xtarg, ytarg, ztarg = target_point
-    denom = (0.97 / 2.0) * (n - (i * 2))
+    bond_length = 1
+    denom = (bond_length / 2.0) * (number_of_beads - (i * 2))
 
     theta_x = 0.5 * (1 - ((xtarg - x) / denom))
     theta_y = 0.5 * (1 - ((ytarg - y) / denom))
@@ -191,81 +206,129 @@ def calculate_theta(current_point, target_point, n, i):
     return theta_x, theta_y, theta_z
 
 
-def step_choice(i, current_point, target_point, bead_positions, box_size, n):
-    """Choose next step in constrained walk."""
-    x, y, z = current_point
+def step_choice(i, current_point, target_point, bead_positions, simulation_params):
+    """Choose where the next bead should be placed.
 
-    theta = calculate_theta(current_point, target_point, n, i)
+    Args:
+        i (int): distance (in beads) from current bead to node
+        current_point (np.ndarray): x, y, z coordinates of bead represented
+            as a numpy array of floats
+        target_point (tuple): x, y, z coordinates of bead on other side of chain
+            represented as a numpt array of floats
+        bead_positions (np.ndarray): x, y, z coordinates for all beads in the chain
+        simulation_params (list): contains box_size (float) and number of beads (int)
 
-    open_neighborhood= find_neighborhood(x, y, z, bead_positions, box_size)
-    # rows = np.any(region != 0, axis=1)
-    # region = region[rows]
-    index = select_indices(theta, open_neighborhood, current_point)
+    Returns:
+        tuple: x, y, z coordinates (floats) for next bead in chain
+    """
 
-    row_sums = np.sum(index, axis=1)
-    max_sum = np.max(row_sums)
-    options = np.where(row_sums == max_sum)[0]
-    choice = np.random.choice(options)
-    if not np.any(open_neighborhood[choice]):
-        print(choice)
+    box_size, number_of_beads = simulation_params
+
+    # Find probability of direction of movement for a constrained walk
+    theta = calculate_theta(current_point, target_point, number_of_beads, i)
+
+    # Generate array of neighbors that are not currently occupied
+    open_neighborhood = find_neighborhood(
+        current_point, bead_positions, box_size)
+
+    # Generate boolean array of whether neighbor is in the desired direction
+    neighbor_direction_match = select_indices(
+        theta, open_neighborhood, current_point)
+
+    # Choose from neighbors that most match desired theta outcome
+    # Select neighbors with highest score then choose one at random
+    neighbor_scores = np.sum(neighbor_direction_match, axis=1)
+    max_score = np.max(neighbor_scores)
+    best_neighbors = np.where(neighbor_scores == max_score)[0]
+    choice = np.random.choice(best_neighbors)
     return open_neighborhood[choice]
 
 
-def constrained_walk(start, end, box_size, n=15):
-    """Generate atom position in a constrained walk between two nodes."""
-    [x0, y0, z0] = start
-    [xn, yn, zn] = end
-    [x0, y0, z0] = unwrap_coords(start, end, box_size)
-    x = x0
-    y = y0
-    z = z0
+def constrained_walk(start, end, box_size, n):
+    """Generate atom positions in a constrained walk between two nodes.
+
+    Args:
+        start (tuple): x, y, z coordinates (floats) of first node
+        end (tuple): x, y, z coordinates (floats) of second node
+        box_size (float): length of side of cubic simulation box
+        n (int): Number of beads in connecting chain (excluding nodes)
+
+    Returns:
+        np.ndarry: x, y, z coordinates of all beads in chain (excluding nodes)
+    """
+    # Reposition first node outside box if necessary to minimize distance between nodes
+    start = unwrap_coords(start, end, box_size)
     bead_positions = np.empty((n+2, 3))
     bead_positions[:] = np.nan
-    bead_positions[0] = [x0, y0, z0]
-    bead_positions[-1] = [xn, yn, zn]
+    bead_positions[0] = start
+    bead_positions[-1] = end
+    target_point = start
 
     for i in range(int(n/2)+1):
         # Step from starting side
-        current_point = x, y, z
-        target_point = xn, yn, zn
+        current_point = target_point
+        target_point = bead_positions[n+1-i]
+        # Reposition current bead outside box if necessary to minimize distance between beads
         current_point = unwrap_coords(current_point, target_point, box_size)
-        x, y, z = step_choice(i, current_point, target_point,
-                              bead_positions, box_size, n)
-        bead_positions[i+1] = [x, y, z]
+        # Pick position for next bead using constrained convergent walk
+        bead_positions[i+1] = step_choice(i, current_point, target_point,
+                                          bead_positions, [box_size, n])
+
         # Step from ending side
-        current_point = xn, yn, zn
-        target_point = x, y, zn
-        xn, yn, zn = step_choice(i, current_point, target_point,
-                                 bead_positions, box_size, n)
-        bead_positions[n-i] = [xn, yn, zn]
+        current_point = target_point
+        target_point = bead_positions[i+1]
+
+        # Pick position for next bead using constrained convergent walk
+        bead_positions[n-i] = step_choice(i, current_point, target_point,
+                                          bead_positions, [box_size, n])
+
     return bead_positions[1:-1]
 
 
 def calculate_wrapped_distance(array, box_size):
-    """Calculate the shortest distance between two points"""
-    num_rows = array.shape[0]
-    results = np.zeros_like(array)
+    """Calculate distance between coordinates for adjacent beads, adjusting for periodic boundaries
 
-    for i in range(0, num_rows - 1, 1):
-        new_row1 = unwrap_coords(array[i], array[i + 1], box_size)
+    Args:
+        array (np.ndarray): x, y, z coordinates of all points
+        box_size (float): length of side of cubic simulation box
 
-        # Calculate the difference between new_row1 and row i+1
-        diff = abs(new_row1 - array[i + 1])
-        results[i] = diff
+    Returns:
+        np.array: array of distance between adjusted points
+    """
 
-    return np.array(results)
+    # Calculate adjusted points for all points except the last one
+    adjusted_points = unwrap_coords(array[:-1], array[1:], box_size)
 
+    # Calculate the difference between adjusted points and the next points
+    diff = np.abs(adjusted_points - array[1:])
 
-def calculate_wrapped_distance_full(array, box_size):
-    """Calculate actual distance, not difference."""
-    num_rows = array.shape[0]
-    results = np.zeros((num_rows, 1))
-    for i in range(0, num_rows - 1, 1):
-        new_row = unwrap_coords(array[i], array[i+1], box_size)
-        results[i] = math.sqrt((new_row[0]-array[i + 1, 0])**2 +
-                               (new_row[1] - array[i + 1, 1])**2 +
-                               (new_row[2] - array[i + 1, 2])**2)
+    # Pad the results with a 0 at the beginning to match the original shape
+    results = np.pad(diff, ((0, 1), (0, 0)), 'constant', constant_values=0)
+
     return results
+
+
+def calculate_wrapped_distance_full(points, box_size):
+    """Calculate distance between adjacent beads, adjusting for periodic boundaries
+
+    Args:
+        points (np.ndarray): x, y, z coordinates (floats) of beads in chain
+        box_size (float): length of one size of cubic simulation box
+
+    Returns:
+        np.ndarray: distance between adjacent points
+    """
+
+    # Shift array to get coordinates of the next point
+    next_points = np.roll(points, -1, axis=0)
+
+    # Apply unwrapping logic to next_points
+    unwrapped_points = unwrap_coords(points, next_points, box_size)
+
+    # Calculate distance using broadcasting
+    distances = np.sqrt(np.sum((unwrapped_points - next_points)**2, axis=1))
+
+    return distances[:-1].reshape(-1, 1)
 
 
 def create_atom_list(node_data, edge_data, len_of_chain):
@@ -323,27 +386,40 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
         maxdist = min(maxdist, curr)
     for i, coords in enumerate(masterpath):
         masterpath[i] = wrap_coords(coords, box_size)
+    if maxdist > cutoff:
+        raise ValueError(f'Not Found for {point_0, point_n}')
     return masterpath, maxdist, cycle
 
-def generate_and_update(**kwargs):
-    """Helper function to generate and update chain data."""
+
+def generate_and_update(shared_data, **kwargs):
+    """Generate beads in chain and update dataframes.
+
+    Returns:
+        tuple: updated bead_data(pd.DataFrame), updated bond_data (pd.DataFrame),
+            cycles (int), and maxdist (float)
+    """
     edge = kwargs['edge']
     chain_index = kwargs['chain_index']
-    bond_data = kwargs['bond_data']
-    bead_data = kwargs['bead_data']
     node_data = kwargs['node_data']
-    box_size = kwargs['box_size']
-    len_of_chain = kwargs['len_of_chain']
+    max_distance_mismatch = 1.3
 
-    point_0 = (node_data[int(edge[0]), 0], node_data[int(edge[0]), 1], node_data[int(edge[0]), 2])
-    point_n = (node_data[int(edge[1]), 0], node_data[int(edge[1]), 1], node_data[int(edge[1]), 2])
+    # Get x, y, z coordinates for current nodes
+    point_0 = node_data[int(edge[0])][:-1]
+    point_n = node_data[int(edge[1])][:-1]
 
-    masterpath, maxdist, cycle = generate_chain_path(point_0, point_n, 1.3, len_of_chain, box_size)
+    # Find x, y, z coordinates of beads in chain
+    masterpath, maxdist, cycle = generate_chain_path(
+        point_0, point_n, max_distance_mismatch, kwargs['len_of_chain'], kwargs['box_size'])
 
+    # Update data
     id_range = np.arange(len(node_data) + (chain_index * len(masterpath)),
                          len(node_data) + ((chain_index + 1) * len(masterpath)))
-    bead_data_updated = update_bead_list(bead_data.copy(), id_range, masterpath, chain_index)
-    bond_data_updated = update_bond_list(id_range, edge, bond_data)
+    bead_data_updated = update_bead_list(
+        shared_data['bead_data'], id_range, masterpath, chain_index)
+    bond_data_updated = update_bond_list(id_range, edge, shared_data['bond_data'])
+
+    shared_data['bead_data'] = bead_data_updated
+    shared_data['bond_data'] = bond_data_updated
 
     return bead_data_updated, bond_data_updated, cycle, maxdist
 
@@ -356,19 +432,24 @@ def generate_wrapper(task):
 def create_chain_parallel(full_edge_data, bond_data, bead_data, node_data, box_size,
                           len_of_chain, num_processes):
     """Create chains in parallel."""
-    with multiprocessing.Pool(processes=num_processes) as pool:
-        common_kwargs = {  # Common arguments for all calls
-            'bond_data': bond_data,
-            'bead_data': bead_data,
-            'node_data': node_data,
-            'box_size': box_size,
-            'len_of_chain': len_of_chain
-            }
+
+    with multiprocessing.Manager() as manager:
+        shared_data = manager.dict(
+            {'bead_data': bead_data, 'bond_data': bond_data})
+        common_kwargs = {'shared_data': shared_data,
+                         'node_data': node_data,
+                         'box_size': box_size,
+                         'len_of_chain': len_of_chain, }
+
         tasks = [{'edge': edge, 'chain_index': i, **common_kwargs}
                  for i, edge in enumerate(full_edge_data)]
-        results = list(tqdm(pool.imap_unordered(generate_wrapper, tasks),  # Use the wrapper
+
+        with multiprocessing.Pool(processes=num_processes) as pool:
+            results = list(tqdm(pool.imap_unordered(generate_wrapper, tasks),  # Use the wrapper
                                 total=len(full_edge_data),
                                 desc="Generating Chains"))
+        bead_data = shared_data['bead_data']
+        bond_data = shared_data['bond_data']
 
     _, _, cycles, maxdists = zip(*results)
     run_info_array = np.column_stack((cycles, maxdists))
@@ -376,7 +457,8 @@ def create_chain_parallel(full_edge_data, bond_data, bead_data, node_data, box_s
     # Update bond_data and bead_data based on results
     for bead_data_updated, bond_data_updated, _, _ in results:
         bead_data.update(bead_data_updated)
-        bond_data = pd.concat([bond_data, bond_data_updated], ignore_index=True)
+        bond_data = pd.concat(
+            [bond_data, bond_data_updated], ignore_index=True)
 
     return bead_data, bond_data, run_info_array
 
@@ -384,12 +466,16 @@ def create_chain_parallel(full_edge_data, bond_data, bead_data, node_data, box_s
 if __name__ == '__main__':
     STUDY_NAME = '20241120B1C1'
     COORDS = ['x', 'y', 'z']
-    cpu_num = 1 # int(np.floor(multiprocessing.cpu_count()/2))
+    cpu_num = int(np.floor(multiprocessing.cpu_count()/2))
 
-    [NodeData, Edges, PB_edges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME, COORDS)
+    [NodeData, Edges, PB_edges, BOX_SIZE,
+        LENGTH_OF_CHAIN] = load_files(STUDY_NAME, COORDS)
+
     FullEdges = np.concatenate((Edges, PB_edges))
     BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
-    BondData = pd.DataFrame(columns=["BondType", "Atom1", "Atom2"], dtype="int")
+    BondData = pd.DataFrame(
+        columns=["BondType", "Atom1", "Atom2"], dtype="int")
     BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BondData, BeadData,
-                                                NodeData, BOX_SIZE, LENGTH_OF_CHAIN, cpu_num)
+                                                        NodeData, BOX_SIZE,
+                                                        LENGTH_OF_CHAIN, cpu_num)
     write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
