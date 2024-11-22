@@ -13,7 +13,7 @@ from file_functions import load_files, write_lammps_data
 
 
 def unwrap_coords(first_point, second_point, box_size):
-    """Adjust first coordinates to minize distance, accounting for periodic boundary conditions.
+    """Adjust first coordinates to minimize distance, accounting for periodic boundary conditions.
 
     Args:
         first_point (tuple): x, y, z coordinates (floats) of first point
@@ -206,7 +206,7 @@ def calculate_theta(current_point, target_point, number_of_beads, i):
     return theta_x, theta_y, theta_z
 
 
-def step_choice(i, current_point, target_point, bead_positions, simulation_params):
+def step_choice(i, current_point, target_point, bead_positions, sim_params):
     """Choose where the next bead should be placed.
 
     Args:
@@ -216,13 +216,13 @@ def step_choice(i, current_point, target_point, bead_positions, simulation_param
         target_point (tuple): x, y, z coordinates of bead on other side of chain
             represented as a numpt array of floats
         bead_positions (np.ndarray): x, y, z coordinates for all beads in the chain
-        simulation_params (list): contains box_size (float) and number of beads (int)
+        sim_params (list): contains box_size (float) and number of beads (int)
 
     Returns:
         tuple: x, y, z coordinates (floats) for next bead in chain
     """
 
-    box_size, number_of_beads = simulation_params
+    box_size, number_of_beads = sim_params
 
     # Find probability of direction of movement for a constrained walk
     theta = calculate_theta(current_point, target_point, number_of_beads, i)
@@ -332,25 +332,48 @@ def calculate_wrapped_distance_full(points, box_size):
 
 
 def create_atom_list(node_data, edge_data, len_of_chain):
-    """Create panda Data Frame of generated positions and nodes."""
-    [x_data, y_data, z_data, node_type] = [node_data[:, 0], node_data[:, 1],
-                                           node_data[:, 2], node_data[:, 3]]
-    atom_list = pd.DataFrame(data={'ID':
-                                   np.arange(0, ((len_of_chain) *
-                                                 len(edge_data) +
-                                                 len(x_data)), 1),
-                                   'X': np.nan, 'Y': np.nan, 'Z': np.nan,
-                                   'Mol': np.nan})
-    atom_list.loc[np.arange(0, len(x_data)), "X"] = x_data
-    atom_list.loc[np.arange(0, len(x_data)), "Y"] = y_data
-    atom_list.loc[np.arange(0, len(x_data)), "Z"] = z_data
-    atom_list.loc[np.arange(0, len(x_data)), "atom-type"] = node_type
-    atom_list.loc[np.arange(0, len(x_data)), "Mol"] = 0
+    """Create pd.DataFrame to store bead information and preload with nodes.
+
+    Args:
+        node_data (np.ndarray): x, y, z and types of nodes
+        edge_data (np.ndarray): array with start and end node IDs for each connecting chain
+        len_of_chain (int): number of beads in connecting chain excluding nodes
+
+    Returns:
+        pd.DataFrame: DataFrame with x, y, z, molecule id, and atom-type for all beads
+            Information from the nodes is filled in, rest of beads in np.nan
+    """
+    num_nodes = node_data.shape[0]
+    total_atoms = (len_of_chain * len(edge_data)) + num_nodes
+
+    # Create empty DataFrame
+    atom_list = pd.DataFrame({
+        'ID': np.arange(total_atoms),
+        'X': np.nan,
+        'Y': np.nan,
+        'Z': np.nan,
+        'Mol': np.nan,
+        'atom-type': np.nan
+    })
+
+    # Add node information to dataframe
+    atom_list.loc[:num_nodes - 1, ['X', 'Y', 'Z']] = node_data[:, :3]
+    atom_list.loc[:num_nodes - 1, 'atom-type'] = node_data[:, 3]
+    atom_list.loc[:num_nodes - 1, 'Mol'] = 0
     return atom_list
 
 
 def update_bond_list(bead_ids, node_id, bond_list):
-    """Update bond list with bonds from current chain."""
+    """Append bonds of current chain to master bond list
+
+    Args:
+        bead_ids (_type_): _description_
+        node_id (_type_): _description_
+        bond_list (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
     bead_ids = np.insert(bead_ids, [0], node_id[0])
     bead_ids = np.append(bead_ids, node_id[1])
     current_list = pd.DataFrame({"BondType": 1, "Atom1": bead_ids[0:-1],
@@ -360,35 +383,68 @@ def update_bond_list(bead_ids, node_id, bond_list):
 
 
 def update_bead_list(bead_data, bead_ids, path, chain):
-    """Update bead list with beads frm current chain."""
-    bead_data.loc[bead_ids, "X"] = path[:, 0]
-    bead_data.loc[bead_ids, "Y"] = path[:, 1]
-    bead_data.loc[bead_ids, "Z"] = path[:, 2]
+    """Update position data frame with location of beads for current chain.
+
+    Args:
+        bead_data (pd.DataFrame): ID, x, y, z, molecule id, atom-type for all beads in system
+        bead_ids (np.ndarray): atom IDS for beads in current chain
+        path (np.ndarray): x, y, z coordinates for all beads in current chain
+        chain (int): number of chain generated
+
+    Returns:
+        pd.DataFrame: updated position DataFrame
+    """
+    bead_data.loc[bead_ids, ["X", "Y", "Z"]] = path
     bead_data.loc[bead_ids, "Mol"] = chain + 1
     bead_data.loc[bead_ids, "atom-type"] = 2
     return bead_data
 
 
 def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
-    """Try to generate chain path within a number of cycles 
-    where middle beads are within a cutoff distance."""
-    maxdist = 50  # arbitrary large value to start
-    cycle = 0
+    """Try to generate path for chain such that middle beads are not further apart then the cutoff.
+
+    Args:
+        point_0 (np.ndarray): x, y, z coordinates of first node
+        point_n (np.ndarray): x, y, z coordinate of second node
+        cutoff (float): Furthest separation middle middle beads allowed
+        len_of_chain (int): number of beads in chain, excluding nodes
+        box_size (float): length of side of cubic simulation box    
+
+    Raises:
+        ValueError: No path is found in the number of cycles alloted 
+            that meets distance requirement
+
+    Returns:
+        list: bead coordinates for path with lowest separation (np.ndarray)
+            the separation between middle beads for this path (float)
+            the number of cycles it took to find path that met criteria (int)
+    """
+    min_max_separation, cycle = 50, 0  # Initialize loop
+    cycle_limit = 100
     masterpath = np.empty((1, 1))
-    while maxdist > cutoff and cycle < 100:  # arbitrary cut offs
+
+    # Generate paths until one is found that meets separation criteria
+    # or maximum number of cycles is reached
+    while min_max_separation > cutoff and cycle < cycle_limit:
+        # Generate path
         path = constrained_walk(start=point_0, end=point_n,
                                 box_size=box_size, n=len_of_chain)
+        # Find maximum separation between adjacent beads in current chain
         curr = max(calculate_wrapped_distance_full(path, box_size))[0]
         cycle += 1
-        if curr < maxdist:
-            maxdist = curr
+        # If current max separation is smaller than current miminum found
+        #  save path and update maxdist
+        if curr < min_max_separation:
+            min_max_separation = curr
             masterpath = path
-        maxdist = min(maxdist, curr)
+        min_max_separation = min(min_max_separation, curr)
+    # Move generated positions inside the simulation box
     for i, coords in enumerate(masterpath):
         masterpath[i] = wrap_coords(coords, box_size)
-    if maxdist > cutoff:
+    # Raise error if path meeting distance criteria was not found within cycle limit
+    if min_max_separation > cutoff:
         raise ValueError(f'Not Found for {point_0, point_n}')
-    return masterpath, maxdist, cycle
+    return masterpath, min_max_separation, cycle
 
 
 def generate_and_update(shared_data, **kwargs):
@@ -416,7 +472,8 @@ def generate_and_update(shared_data, **kwargs):
                          len(node_data) + ((chain_index + 1) * len(masterpath)))
     bead_data_updated = update_bead_list(
         shared_data['bead_data'], id_range, masterpath, chain_index)
-    bond_data_updated = update_bond_list(id_range, edge, shared_data['bond_data'])
+    bond_data_updated = update_bond_list(
+        id_range, edge, shared_data['bond_data'])
 
     shared_data['bead_data'] = bead_data_updated
     shared_data['bond_data'] = bond_data_updated
@@ -429,36 +486,49 @@ def generate_wrapper(task):
     return generate_and_update(**task)
 
 
-def create_chain_parallel(full_edge_data, bond_data, bead_data, node_data, box_size,
-                          len_of_chain, num_processes):
-    """Create chains in parallel."""
+def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_processes):
+    """Create bead positions for each defined edge in parallel.
 
+    Args:
+        full_edge_data (np.ndarray): IDs of the starting and ending nodes for each edge
+        bead_data (pd.DataFrame): x, y, z coordinates, molecule id, and atom-type for each bead
+            Nodes are filled in, rest is np.nan
+        bond_data (pd.DataFrame): initialized dataframe containing
+            bondtype, first atom, second atom for each bonded pair
+        sim_params (dict): contains node_data (np.ndarray), box_size(float), and len_of_chain (int)
+        num_processes (int): number of processors to run across for multiprocessing
+
+    Returns:
+        list: completed bead_data (pd.DataFrame), complete bond_data (pd.DataFrame),
+            run info (array) with number of cycles and the max distance between 
+            two adjacent beads for each chain
+    """
     with multiprocessing.Manager() as manager:
         shared_data = manager.dict(
             {'bead_data': bead_data, 'bond_data': bond_data})
-        common_kwargs = {'shared_data': shared_data,
-                         'node_data': node_data,
-                         'box_size': box_size,
-                         'len_of_chain': len_of_chain, }
+        system_params = {'shared_data': shared_data,
+                         'node_data': sim_params['node_data'],
+                         'box_size': sim_params['box_size'],
+                         'len_of_chain': sim_params['len_of_chain']}
 
-        tasks = [{'edge': edge, 'chain_index': i, **common_kwargs}
+        tasks = [{'edge': edge, 'chain_index': i, **system_params}
                  for i, edge in enumerate(full_edge_data)]
 
         with multiprocessing.Pool(processes=num_processes) as pool:
             results = list(tqdm(pool.imap_unordered(generate_wrapper, tasks),  # Use the wrapper
                                 total=len(full_edge_data),
+                                unit="Chain",
                                 desc="Generating Chains"))
         bead_data = shared_data['bead_data']
         bond_data = shared_data['bond_data']
 
-    _, _, cycles, maxdists = zip(*results)
-    run_info_array = np.column_stack((cycles, maxdists))
+    run_info_array = np.array([])
 
     # Update bond_data and bead_data based on results
-    for bead_data_updated, bond_data_updated, _, _ in results:
+    for bead_data_updated, bond_data_updated, cycles, maxdists in results:
         bead_data.update(bead_data_updated)
-        bond_data = pd.concat(
-            [bond_data, bond_data_updated], ignore_index=True)
+        bond_data.update(bond_data_updated)
+        run_info_array = np.append(run_info_array, (cycles, maxdists))
 
     return bead_data, bond_data, run_info_array
 
@@ -475,7 +545,12 @@ if __name__ == '__main__':
     BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
     BondData = pd.DataFrame(
         columns=["BondType", "Atom1", "Atom2"], dtype="int")
-    BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BondData, BeadData,
-                                                        NodeData, BOX_SIZE,
-                                                        LENGTH_OF_CHAIN, cpu_num)
+    simulation_params = {
+        'node_data': NodeData,
+        'box_size': BOX_SIZE,
+        'len_of_chain': LENGTH_OF_CHAIN
+    }
+    BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BeadData, BondData,
+                                                        simulation_params, cpu_num)
     write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
+    print(f'{STUDY_NAME}-in.data created')
