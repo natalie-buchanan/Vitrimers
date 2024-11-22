@@ -1,3 +1,8 @@
 {
-    "python.analysis.diagnosticSeverityOverrides": {}
+    "python.analysis.diagnosticSeverityOverrides": {},
+    "python.testing.pytestArgs": [
+        "Data"
+    ],
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestEnabled": true
 }
