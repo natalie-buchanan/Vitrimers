@@ -84,3 +84,33 @@ Bonds\n\n""")
                        f"{int(bond_data.iloc[i]['Atom1']) + 1} " +
                        f"{int(bond_data.iloc[i]['Atom2']) + 1} " +
                        "\n")
+
+def write_lammps_input(name: str, network="auelp"):
+    """Write LAMMPS in.lammps file including positions and bonds."""
+    base_path = os.path.join(os.getcwd(), "Data", network)
+    data_file = os.path.join(base_path, name + '-in.lammps')
+    with open(data_file, "w",  encoding="utf-8") as file:
+        file.write("""# {name}
+units   lj
+boundary p p p
+atom_style molecular
+                   
+read_data {name}-in.data
+                   
+velocity all create 1 837
+                   
+pair_style lj/cut 2.5
+pair_coeff * * 1.0 1.0 2.5
+                   
+bond_style fene
+bond_coeff 1 5 1 1 1
+special_bonds fene
+                   
+timestep 0.01
+                   
+fix ensem all npt temp 1 1 10 iso 0 0 10
+                   
+thermo_stype custom step temp press density pe ke etotal
+thermo 1000
+        
+                   """.format(name=name))
