@@ -9,7 +9,7 @@ import os
 import numpy as np
 
 
-def load_files(name: str, coords:list, network="auelp"):
+def load_files(name: str, network="auelp"):
     """
     Retrieve data from aelp-network-topology-synthesis.
 
@@ -24,22 +24,20 @@ def load_files(name: str, coords:list, network="auelp"):
     base_path = os.path.join(os.getcwd(), "Data", network)
 
     try:
-        core_coords = [np.loadtxt(os.path.join(base_path, f'{name}-core_{c}.dat'))
-                       for c in coords]
+        core_coords = np.loadtxt(os.path.join(base_path, f'{name}.coords'))
         edges = np.loadtxt(os.path.join(
             base_path, name + '-conn_core_edges.dat'))
         pb_edges = np.loadtxt(os.path.join(
             base_path, name + '-conn_pb_edges.dat'))
         node_type = np.loadtxt(os.path.join(base_path, name +
-                                            '-core_node_type.dat'))
+                                            '-node_type.dat'))
         box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
         len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
-                                                   '-nu.dat'))[int(name[-1])])
+                                                   '-nu.dat')))
     except (FileNotFoundError, OSError) as e:
         print(f"Error loading data files: {e}")
         return None  # Or handle the error as appropriate
-    node_files = np.asarray([*core_coords, node_type])
-    node_files = node_files.transpose()
+    node_files = np.column_stack((core_coords, node_type.astype(int)))
     len_of_chain -= 1  # number of beads one less than number of edges
 
     return [node_files, edges, pb_edges, box_size, len_of_chain]

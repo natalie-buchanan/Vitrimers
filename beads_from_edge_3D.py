@@ -367,12 +367,12 @@ def update_bond_list(bead_ids, node_id, bond_list):
     """Append bonds of current chain to master bond list
 
     Args:
-        bead_ids (_type_): _description_
-        node_id (_type_): _description_
-        bond_list (_type_): _description_
+        bead_ids (np.ndarray): index or ids of beads in current chain
+        node_id (np.ndarray): index or ids of both nodes at ends of current chain
+        bond_list (pd.DataFrame): bond types, atom 1, and atom 2 to define all bonds
 
     Returns:
-        _type_: _description_
+        pd.DataFrame: Updated dataframe with bonds from current chain
     """
     bead_ids = np.insert(bead_ids, [0], node_id[0])
     bead_ids = np.append(bead_ids, node_id[1])
@@ -534,12 +534,11 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
 
 if __name__ == '__main__':
-    STUDY_NAME = '20241120B1C1'
-    COORDS = ['x', 'y', 'z']
+    STUDY_NAME = '20241127B0C1'
     cpu_num = int(np.floor(multiprocessing.cpu_count()/2))
 
     [NodeData, Edges, PB_edges, BOX_SIZE,
-        LENGTH_OF_CHAIN] = load_files(STUDY_NAME, COORDS)
+        LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
 
     FullEdges = np.concatenate((Edges, PB_edges))
     BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)

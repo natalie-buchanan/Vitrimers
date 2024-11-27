@@ -1,0 +1,8 @@
+numpy
+scipy
+networkx[default]
+matplotlib
+hilbertcurve
+ipython
+ipykernel
+ipympl
