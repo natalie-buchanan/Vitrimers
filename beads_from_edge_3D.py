@@ -326,7 +326,7 @@ def calculate_wrapped_distance_full(points, box_size):
     unwrapped_points = unwrap_coords(points, next_points, box_size)
 
     # Calculate distance using broadcasting
-    distances = np.sqrt(np.sum((unwrapped_points - next_points)**2, axis=1))
+    distances = np.sqrt(np.nansum((unwrapped_points - next_points)**2, axis=1))
 
     return distances[:-1].reshape(-1, 1)
 
@@ -420,7 +420,7 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
             the number of cycles it took to find path that met criteria (int)
     """
     min_max_separation, cycle = 50, 0  # Initialize loop
-    cycle_limit = 100
+    cycle_limit = 200
     masterpath = np.empty((1, 1))
 
     # Generate paths until one is found that meets separation criteria
@@ -443,7 +443,7 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
         masterpath[i] = wrap_coords(coords, box_size)
     # Raise error if path meeting distance criteria was not found within cycle limit
     if min_max_separation > cutoff:
-        raise ValueError(f'Not Found for {point_0, point_n}')
+        raise ValueError(f'Path not Found for {point_0, point_n}')
     return masterpath, min_max_separation, cycle
 
 
@@ -534,12 +534,13 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
 
 if __name__ == '__main__':
-    STUDY_NAME = '20241127B0C1'
+    STUDY_NAME = '20241127A0C1'
     cpu_num = int(np.floor(multiprocessing.cpu_count()/2))
 
     [NodeData, Edges, PB_edges, BOX_SIZE,
         LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
-
+    if NodeData.shape[1] == 3:
+        NodeData = np.insert(NodeData, 2, np.nan, axis=1)
     FullEdges = np.concatenate((Edges, PB_edges))
     BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
     BondData = pd.DataFrame(
@@ -551,5 +552,6 @@ if __name__ == '__main__':
     }
     BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BeadData, BondData,
                                                         simulation_params, cpu_num)
+    BeadData.fillna(0, axis=1, inplace=True)
     write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
     print(f'{STUDY_NAME}-in.data created')
