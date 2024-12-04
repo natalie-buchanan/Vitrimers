@@ -29,18 +29,26 @@ def load_files(name: str, network="auelp"):
             base_path, name + '-conn_core_edges.dat'))
         pb_edges = np.loadtxt(os.path.join(
             base_path, name + '-conn_pb_edges.dat'))
+        full_edges = np.concatenate((edges, pb_edges))
         node_type = np.loadtxt(os.path.join(base_path, name +
                                             '-node_type.dat'))
         box_size = np.loadtxt(os.path.join(base_path, name[0:-2] + '-L.dat'))
         len_of_chain = int(np.loadtxt(os.path.join(base_path, name[0:-3] +
                                                    '-nu.dat')))
+        if network == 'apelp':
+            len_of_chain_pb = np.loadtxt(os.path.join(base_path, name+
+                                                   '-conn_nu_pb_edges.dat'))
+            len_of_chain_c0re = np.loadtxt(os.path.join(base_path, name +
+                                                   '-conn_nu_core_edges.dat'))
+            len_of_chain = np.concatenate((len_of_chain_c0re, len_of_chain_pb))
+        else:
+            len_of_chain = np.resize(len_of_chain, ( len(full_edges),1))
     except (FileNotFoundError, OSError) as e:
         print(f"Error loading data files: {e}")
         return None  # Or handle the error as appropriate
     node_files = np.column_stack((core_coords, node_type.astype(int)))
     len_of_chain -= 1  # number of beads one less than number of edges
-
-    return [node_files, edges, pb_edges, box_size, len_of_chain]
+    return [node_files, full_edges, box_size, len_of_chain]
 
 
 def write_lammps_data(name: str, atom_data, bond_data, box_size,
@@ -97,11 +105,11 @@ read_data {name}-in.data
                    
 velocity all create 1 837
                    
-pair_style lj/cut 2.5
-pair_coeff * * 1.0 1.0 2.5
+variable prefactor equal ramp(0, 30)
+fix 1 all adapt 1 pair soft a * * v_prefactor
                    
 bond_style fene
-bond_coeff 1 5 1 1 1
+bond_coeff 1 30 1.5 1 1.5
 special_bonds fene
                    
 timestep 0.01
@@ -110,5 +118,8 @@ fix ensem all npt temp 1 1 10 iso 0 0 10
                    
 thermo_stype custom step temp press density pe ke etotal
 thermo 1000
+                   
+dump    dump1 custom 1000 pushoff.lammpstrj id mol type x y z
+run 10000
         
                    """.format(name=name))

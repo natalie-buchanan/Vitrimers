@@ -6,10 +6,11 @@ Created on Mon Oct 28 13:37:25 2024
 
 import random
 import multiprocessing
+import traceback
 import pandas as pd
 import numpy as np
 from tqdm import tqdm  # progress bar
-from file_functions import load_files, write_lammps_data
+from file_functions import load_files, write_lammps_data, write_lammps_input
 
 
 def unwrap_coords(first_point, second_point, box_size):
@@ -199,6 +200,9 @@ def calculate_theta(current_point, target_point, number_of_beads, i):
     xtarg, ytarg, ztarg = target_point
     bond_length = 1
     denom = (bond_length / 2.0) * (number_of_beads - (i * 2))
+    if number_of_beads-(i*2) == 0:
+        print(number_of_beads, i)
+        raise ValueError('Denom is 1')
 
     theta_x = 0.5 * (1 - ((xtarg - x) / denom))
     theta_y = 0.5 * (1 - ((ytarg - y) / denom))
@@ -271,16 +275,20 @@ def constrained_walk(start, end, box_size, n):
         # Reposition current bead outside box if necessary to minimize distance between beads
         current_point = unwrap_coords(current_point, target_point, box_size)
         # Pick position for next bead using constrained convergent walk
-        bead_positions[i+1] = step_choice(i, current_point, target_point,
-                                          bead_positions, [box_size, n])
+        if (n-(i*2)) != 0:
+            bead_positions[i+1] = step_choice(i, current_point, target_point,
+                                              bead_positions, [box_size, n])
+        else:
+            pass
 
         # Step from ending side
-        current_point = target_point
-        target_point = bead_positions[i+1]
+        if i+1 < n-i:
+            current_point = target_point
+            target_point = bead_positions[i+1]
 
-        # Pick position for next bead using constrained convergent walk
-        bead_positions[n-i] = step_choice(i, current_point, target_point,
-                                          bead_positions, [box_size, n])
+            # Pick position for next bead using constrained convergent walk
+            bead_positions[n-i] = step_choice(i, current_point, target_point,
+                                            bead_positions, [box_size, n])
 
     return bead_positions[1:-1]
 
@@ -331,7 +339,7 @@ def calculate_wrapped_distance_full(points, box_size):
     return distances[:-1].reshape(-1, 1)
 
 
-def create_atom_list(node_data, edge_data, len_of_chain):
+def create_atom_list(node_data, len_of_chain):
     """Create pd.DataFrame to store bead information and preload with nodes.
 
     Args:
@@ -344,7 +352,7 @@ def create_atom_list(node_data, edge_data, len_of_chain):
             Information from the nodes is filled in, rest of beads in np.nan
     """
     num_nodes = node_data.shape[0]
-    total_atoms = (len_of_chain * len(edge_data)) + num_nodes
+    total_atoms = np.sum(len_of_chain) + num_nodes
 
     # Create empty DataFrame
     atom_list = pd.DataFrame({
@@ -420,7 +428,7 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
             the number of cycles it took to find path that met criteria (int)
     """
     min_max_separation, cycle = 50, 0  # Initialize loop
-    cycle_limit = 200
+    cycle_limit = 2000
     masterpath = np.empty((1, 1))
 
     # Generate paths until one is found that meets separation criteria
@@ -438,12 +446,16 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
             min_max_separation = curr
             masterpath = path
         min_max_separation = min(min_max_separation, curr)
+
+    # Create even;y spaced points if no paths meeting found within cycle limit
+    if min_max_separation > cutoff:
+        masterpath = np.linspace(point_0, point_n, len_of_chain+2)[1:-1]
+        min_max_separation = min(min_max_separation, curr)
     # Move generated positions inside the simulation box
     for i, coords in enumerate(masterpath):
         masterpath[i] = wrap_coords(coords, box_size)
-    # Raise error if path meeting distance criteria was not found within cycle limit
-    if min_max_separation > cutoff:
-        raise ValueError(f'Path not Found for {point_0, point_n}')
+
+
     return masterpath, min_max_separation, cycle
 
 
@@ -457,6 +469,7 @@ def generate_and_update(shared_data, **kwargs):
     edge = kwargs['edge']
     chain_index = kwargs['chain_index']
     node_data = kwargs['node_data']
+    len_of_chain = int(kwargs['len_of_chain'][chain_index])
     max_distance_mismatch = 1.3
 
     # Get x, y, z coordinates for current nodes
@@ -465,11 +478,11 @@ def generate_and_update(shared_data, **kwargs):
 
     # Find x, y, z coordinates of beads in chain
     masterpath, maxdist, cycle = generate_chain_path(
-        point_0, point_n, max_distance_mismatch, kwargs['len_of_chain'], kwargs['box_size'])
+        point_0, point_n, max_distance_mismatch, len_of_chain, kwargs['box_size'])
 
     # Update data
-    id_range = np.arange(len(node_data) + (chain_index * len(masterpath)),
-                         len(node_data) + ((chain_index + 1) * len(masterpath)))
+    id_range = np.arange(np.sum(kwargs['len_of_chain'][0:chain_index]) +len(node_data),
+                         np.sum(kwargs['len_of_chain'][0:chain_index+1]) +len(node_data),)
     bead_data_updated = update_bead_list(
         shared_data['bead_data'], id_range, masterpath, chain_index)
     bond_data_updated = update_bond_list(
@@ -483,7 +496,12 @@ def generate_and_update(shared_data, **kwargs):
 
 def generate_wrapper(task):
     """Wrapper for multiprocessing chain creation."""
-    return generate_and_update(**task)
+    try:
+        return generate_and_update(**task)
+    except ValueError as e:
+        print(f"Error in worker process: {e}")
+        traceback.print_exc()
+        raise e
 
 
 def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_processes):
@@ -516,14 +534,13 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
         with multiprocessing.Pool(processes=num_processes) as pool:
             results = list(tqdm(pool.imap_unordered(generate_wrapper, tasks),  # Use the wrapper
-                                total=len(full_edge_data),
-                                unit="Chain",
-                                desc="Generating Chains"))
+                            total=len(full_edge_data),
+                            unit="Chain",
+                            desc="Generating Chains"))
         bead_data = shared_data['bead_data']
         bond_data = shared_data['bond_data']
 
     run_info_array = np.array([])
-
     # Update bond_data and bead_data based on results
     for bead_data_updated, bond_data_updated, cycles, maxdists in results:
         bead_data.update(bead_data_updated)
@@ -534,15 +551,14 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
 
 if __name__ == '__main__':
-    STUDY_NAME = '20241127A0C1'
-    cpu_num = int(np.floor(multiprocessing.cpu_count()/2))
+    STUDY_NAME = '20241127B0C1'
+    NETWORK = 'auelp'
+    cpu_num =  int(np.floor(multiprocessing.cpu_count()/2))
 
-    [NodeData, Edges, PB_edges, BOX_SIZE,
-        LENGTH_OF_CHAIN] = load_files(STUDY_NAME)
+    [NodeData, FullEdges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME, NETWORK)
     if NodeData.shape[1] == 3:
         NodeData = np.insert(NodeData, 2, np.nan, axis=1)
-    FullEdges = np.concatenate((Edges, PB_edges))
-    BeadData = create_atom_list(NodeData, FullEdges, LENGTH_OF_CHAIN)
+    BeadData = create_atom_list(NodeData, LENGTH_OF_CHAIN)
     BondData = pd.DataFrame(
         columns=["BondType", "Atom1", "Atom2"], dtype="int")
     simulation_params = {
@@ -553,5 +569,6 @@ if __name__ == '__main__':
     BeadData, BondData, runInfo = create_chain_parallel(FullEdges, BeadData, BondData,
                                                         simulation_params, cpu_num)
     BeadData.fillna(0, axis=1, inplace=True)
-    write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE)
+    write_lammps_data(STUDY_NAME, BeadData, BondData, BOX_SIZE, NETWORK)
     print(f'{STUDY_NAME}-in.data created')
+    write_lammps_input(STUDY_NAME, NETWORK)
