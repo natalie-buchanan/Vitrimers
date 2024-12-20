@@ -19,7 +19,7 @@ def load_files(name: str, network="auelp"):
         network (str): Type of network generated. Used for directory.
 
     Returns:
-        list: [node_files: array, edges: array, pb_edges: array, box_size: float, len_of_chain: int]
+        list: [node_files: array, edges: array, pb_edges: array, box_size: float, len_of_chain: array]
     """
     base_path = os.path.join(os.getcwd(), "Data", network)
 
@@ -38,9 +38,9 @@ def load_files(name: str, network="auelp"):
         if network == 'apelp':
             len_of_chain_pb = np.loadtxt(os.path.join(base_path, name+
                                                    '-conn_nu_pb_edges.dat'))
-            len_of_chain_c0re = np.loadtxt(os.path.join(base_path, name +
+            len_of_chain_core = np.loadtxt(os.path.join(base_path, name +
                                                    '-conn_nu_core_edges.dat'))
-            len_of_chain = np.concatenate((len_of_chain_c0re, len_of_chain_pb))
+            len_of_chain = np.concatenate((len_of_chain_core, len_of_chain_pb))
         else:
             len_of_chain = np.resize(len_of_chain, ( len(full_edges),1))
     except (FileNotFoundError, OSError) as e:
@@ -55,7 +55,7 @@ def write_lammps_data(name: str, atom_data, bond_data, box_size,
                       network="auelp"):
     """Write LAMMPS in.data file including positions and bonds."""
     base_path = os.path.join(os.getcwd(), "Data", network)
-    data_file = os.path.join(base_path, name + '-in.data')
+    data_file = os.path.join(base_path, 'data.' + name)
     with open(data_file, "w",  encoding="utf-8") as file:
         file.write("""{name}
 
@@ -94,32 +94,41 @@ Bonds\n\n""")
 def write_lammps_input(name: str, network="auelp"):
     """Write LAMMPS in.lammps file including positions and bonds."""
     base_path = os.path.join(os.getcwd(), "Data", network)
-    data_file = os.path.join(base_path, name + '-in.lammps')
+    data_file = os.path.join(base_path, 'in.' + name)
     with open(data_file, "w",  encoding="utf-8") as file:
         file.write("""# {name}
 units   lj
 boundary p p p
 atom_style molecular
                    
-read_data {name}-in.data
+read_data data.{name}
                    
-velocity all create 1 837
-                   
-variable prefactor equal ramp(0, 30)
-fix 1 all adapt 1 pair soft a * * v_prefactor
-                   
-bond_style fene
-bond_coeff 1 30 1.5 1 1.5
-special_bonds fene
-                   
-timestep 0.01
-                   
-fix ensem all npt temp 1 1 10 iso 0 0 10
-                   
-thermo_stype custom step temp press density pe ke etotal
+variable        T equal 1
+variable        P equal 0
+
+bond_style      fene
+bond_coeff      1 30 1.5 1 1
+special_bonds   fene
+
+########## Soft pushoff##############
+pair_style  soft 1.12246
+pair_coeff  * * 10.0 
+variable        prefactor equal 50.0*elapsed/10000
+fix             softpushoff all adapt 1 pair soft a 1 1 v_prefactor
+#####################################
+
+neighbor        1.0 bin
+neigh_modify    every 1 delay 0 check yes
+comm_modify     cutoff 3.5
+
+timestep        0.01
+
+fix             ensem all npt temp ${{T}} ${{T}} $(100.0 * dt) iso 0 0 $(1000*dt)
+
+thermo_style custom step temp press density pe ke etotal v_prefactor
 thermo 1000
-                   
-dump    dump1 custom 1000 pushoff.lammpstrj id mol type x y z
+
+dump    dump1 all custom 1000 pushoff.lammpstrj id mol type x y z
 run 10000
-        
+
                    """.format(name=name))

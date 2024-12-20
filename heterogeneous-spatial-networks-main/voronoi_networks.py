@@ -1,4 +1,5 @@
 import numpy as np
+import networkx as nx
 from file_io import (
     L_filename_str,
     config_filename_str
@@ -8,12 +9,13 @@ from scipy.spatial import Voronoi
 from network_topology_initialization_utils import (
     core_node_tessellation,
     unique_sorted_edges,
-    box_neighborhood_identification
+    box_neighborhood_id
 )
-from node_placement import (
-    additional_node_seeding,
-    hilbert_node_label_assignment
+from graph_utils import (
+    add_nodes_from_numpy_array,
+    add_edges_from_numpy_array
 )
+from network_topological_descriptors import network_topological_descriptor
 
 def voronoi_filename_str(
         network: str,
@@ -43,15 +45,14 @@ def voronoi_filename_str(
     # associated with Voronoi-tessellated networks. Exit if a different
     # type of network is passed.
     if network != "voronoi":
-        import sys
-        
         error_str = (
             "This filename prefix convention is only applicable for "
             + "data files associated with Voronoi-tessellated "
             + "networks. This filename prefix will only be supplied if "
             + "network = ``voronoi''."
         )
-        sys.exit(error_str)
+        print(error_str)
+        return None
     return config_filename_str(network, date, batch, sample, config)
 
 def voronoi_L(
@@ -82,14 +83,13 @@ def voronoi_L(
     # This calculation for L is only applicable for Voronoi-tessellated
     # networks. Exit if a different type of network is passed.
     if network != "voronoi":
-        import sys
-        
         error_str = (
             "This calculation for L is only applicable for "
             + "Voronoi-tessellated networks. This calculation will "
             + "only proceed if network = ``voronoi''."
         )
-        sys.exit(error_str)
+        print(error_str)
+        return None
     
     # Calculate and save L
     np.savetxt(
@@ -127,7 +127,7 @@ def voronoi_network_topology_initialization(
         config (int): Configuration number.
     
     """
-    # Load L
+    # Load simulation box size
     L = np.loadtxt(L_filename_str(network, date, batch, sample))
 
     # Generate configuration filename prefix. This establishes the
@@ -161,6 +161,10 @@ def voronoi_network_topology_initialization(
     # Tessellate the germ node coordinates
     tsslltd_germ_coords, _ = core_node_tessellation(
         dim, np.arange(np.shape(germ_coords)[0], dtype=int), germ_coords, L)
+    
+    # Shift the coordinate origin to the center of the simulation box
+    # for improved Voronoi tessellation performance
+    tsslltd_germ_coords -= 0.5 * L
 
     # Apply Voronoi tessellation about the tessellated germs
     tsslltd_core_voronoi = Voronoi(tsslltd_germ_coords)
@@ -170,27 +174,29 @@ def voronoi_network_topology_initialization(
     # Extract vertices from the Voronoi tessellation
     vertices = tsslltd_core_voronoi.vertices
 
+    # Restore the coordinate origin to its original location
+    vertices += 0.5 * L
+
     # Confirm that each vertex solely occupies a box neighborhood that
     # is \pm tol about itself
     tol = 1e-10
     for vertex in range(np.shape(vertices)[0]):
         # Determine if the vertex solely occupies a box neighborhood
         # that is \pm tol about itself
-        _, box_nghbr_num = box_neighborhood_identification(
+        _, box_nghbr_num = box_neighborhood_id(
             dim, vertices, vertices[vertex], tol, inclusive=True, indices=True)
         
         # If there is more than one neighbor, then the neighborhood is
         # overpopulated, and therefore this is an invalid set of input
         # node coordinates for Voronoi tessellation
         if box_nghbr_num > 1:
-            import sys
-            
             error_str = (
                 "A vertex neighborhood has more than one vertex! "
                 + "Therefore, this is an invalid set of input node "
                 + "coordinates for Voronoi tessellation."
             )
-            sys.exit(error_str)
+            print(error_str)
+            return None
     
     # Extract core vertices
     core_vertices = np.logical_and(
@@ -234,10 +240,10 @@ def voronoi_network_topology_initialization(
             else:
                 # Determine the indices of the vertices in the
                 # tessellated core node topology
-                vertex_0_indcs, vertex_0_num = box_neighborhood_identification(
+                vertex_0_indcs, vertex_0_num = box_neighborhood_id(
                     dim, tsslltd_core_vertices, vertices[vertex_0], tol,
                     inclusive=True, indices=True)
-                vertex_1_indcs, vertex_1_num = box_neighborhood_identification(
+                vertex_1_indcs, vertex_1_num = box_neighborhood_id(
                     dim, tsslltd_core_vertices, vertices[vertex_1], tol,
                     inclusive=True, indices=True)
                 
@@ -271,10 +277,10 @@ def voronoi_network_topology_initialization(
                 else:
                     # Determine the indices of the vertices in the
                     # tessellated core node topology
-                    vertex_0_indcs, vertex_0_num = box_neighborhood_identification(
+                    vertex_0_indcs, vertex_0_num = box_neighborhood_id(
                         dim, tsslltd_core_vertices, vertices[vertex_0], tol,
                         inclusive=True, indices=True)
-                    vertex_1_indcs, vertex_1_num = box_neighborhood_identification(
+                    vertex_1_indcs, vertex_1_num = box_neighborhood_id(
                         dim, tsslltd_core_vertices, vertices[vertex_1], tol,
                         inclusive=True, indices=True)
                     
@@ -361,155 +367,123 @@ def voronoi_network_topology(
     # Voronoi-tessellated networks. Exit if a different type of network
     # is passed.
     if network != "voronoi":
-        import sys
-
         error_str = (
             "Network topology initialization procedure is only "
             + "applicable for Voronoi-tessellated networks. This "
             + "procedure will only proceed if network = ``voronoi''."
         )
-        sys.exit(error_str)
+        print(error_str)
+        return None
     voronoi_network_topology_initialization(
         network, date, batch, sample, scheme, dim, n, config)
 
-def voronoi_network_additional_node_seeding(
+def voronoi_network_topological_descriptor(
         network: str,
         date: str,
         batch: str,
         sample: int,
-        scheme: str,
-        dim: int,
-        b: float,
-        n: int,
         config: int,
-        max_try: int) -> None:
-    """Additional node placement procedure for Voronoi-tessellated
-    networks.
-
-    This function generates necessary filenames and calls upon a
-    corresponding helper function to calculate and place additional
-    nodes in the simulation box.
+        length_bound: int,
+        tplgcl_dscrptr: str,
+        np_oprtn: str,
+        save_tplgcl_dscrptr_result: bool,
+        return_tplgcl_dscrptr_result: bool) -> np.ndarray | float | int | None:
+    """Voronoi-tessellated network topological descriptor.
+    
+    This function extracts a Voronoi-tessellated network and sets a
+    variety of input parameters corresponding to a particular
+    topological descriptor (and numpy function) of interest. These are
+    then passed to the master network_topological_descriptor() function,
+    which calculates (and, if called for, saves) the result of the
+    topological descriptor for the Voronoi-tessellated network.
 
     Args:
         network (str): Lower-case acronym indicating the particular type of network that is being represented by the eventual network topology; here, only "voronoi" is applicable (corresponding to Voronoi-tessellated networks ("voronoi")).
         date (str): "YYYYMMDD" string indicating the date during which the network batch and sample data was generated.
         batch (str): Single capitalized letter (e.g., A, B, C, ...) indicating the batch label of the network sample data.
         sample (int): Label of a particular network in the batch.
-        scheme (str): Lower-case acronym indicating the particular scheme used to generate the positions of the core nodes; either "random", "prhd", "pdhu", or "lammps" (corresponding to the random node placement procedure ("random"), periodic random hard disk node placement procedure ("prhd"), periodic disordered hyperuniform node placement procedure ("pdhu"), or nodes randomly placed and minimized via LAMMPS ("lammps")).
-        dim (int): Physical dimensionality of the network; either 2 or 3 (for two-dimensional or three-dimensional networks).
-        b (float): Node diameter.
-        n (int): Intended total number of nodes.
         config (int): Configuration number.
-        max_try (int): Maximum number of node placement attempts for the periodic random hard disk node placement procedure ("prhd").
+        length_bound (int): Maximum ring order (inclusive).
+        tplgcl_dscrptr (str): Topological descriptor name.
+        np_oprtn (str): numpy function/operation name.
+        save_tplgcl_dscrptr_result (bool): Boolean indicating if the topological descriptor result ought to be saved.
+        return_tplgcl_dscrptr_result (bool): Boolean indicating if the topological descriptor result ought to be returned.
+    
+    Returns:
+        np.ndarray | float | int | None: Topological descriptor result.
     
     """
-    # The Voronoi-tessellated network additional node placement
-    # procedure is only applicable for Voronoi-tessellated networks.
-    # Exit if a different type of network is passed.
+    # This topological descriptor calculation is only applicable for
+    # data files associated with Voronoi-tessellated networks. Exit if a
+    # different type of network is passed.
     if network != "voronoi":
-        import sys
-
         error_str = (
-            "Voronoi-tessellated network additional node placement "
-            + "procedure is only applicable for Voronoi-tessellated "
-            + "networks. This procedure will only proceed if "
-            + "network = ``voronoi''."
+            "This topological descriptor calculation is only "
+            + "applicable for data files associated with "
+            + "Voronoi-tessellated networks. This calculation will "
+            + "proceed only if network = ``voronoi''."
         )
-        sys.exit(error_str)
+        print(error_str)
+        return None
+    
+    # Voronoi-tessellated networks are completely elastically-effective,
+    # and thus there is no need to specify if an elastically-effective
+    # end-linked network is desired
+    eeel_ntwrk = False
 
     # Generate filenames
     L_filename = L_filename_str(network, date, batch, sample)
-    coords_filename = (
-        voronoi_filename_str(network, date, batch, sample, config) + ".coords"
-    )
-
-    # Call additional node placement helper function
-    additional_node_seeding(
-        L_filename, coords_filename, scheme, dim, b, n, max_try)
-
-def voronoi_network_hilbert_node_label_assignment(
-        network: str,
-        date: str,
-        batch: str,
-        sample: int,
-        config: int) -> None:
-    """Node label assignment procedure for Voronoi-tessellated networks.
-
-    This function assigns numerical labels to nodes in
-    Voronoi-tessellated networks based on the Hilbert space-filling
-    curve. The node coordinates and network edges are updated
-    accordingly.
-
-    Args:
-        network (str): Lower-case acronym indicating the particular type of network that is being represented by the eventual network topology; here, only "voronoi" is applicable (corresponding to Voronoi-tessellated networks ("voronoi")).
-        date (str): "YYYYMMDD" string indicating the date during which the network batch and sample data was generated.
-        batch (str): Single capitalized letter (e.g., A, B, C, ...) indicating the batch label of the network sample data.
-        sample (int): Label of a particular network in the batch.
-        config (int): Configuration number.
-    
-    """
-    # The Voronoi-tessellated network node label assignment procedure is
-    # only applicable for Voronoi-tessellated networks. Exit if a
-    # different type of network is passed.
-    if network != "voronoi":
-        import sys
-
-        error_str = (
-            "Voronoi-tessellated network node label assignment "
-            + "procedure is only applicable for Voronoi-tessellated "
-            + "networks. This procedure will only proceed if "
-            + "network = ``voronoi''."
-        )
-        sys.exit(error_str)
-    
-    # Load L
-    L = np.loadtxt(L_filename_str(network, date, batch, sample))
-
-    # Generate filenames
     voronoi_filename = voronoi_filename_str(network, date, batch, sample, config)
     coords_filename = voronoi_filename + ".coords"
     conn_core_edges_filename = voronoi_filename + "-conn_core_edges.dat"
     conn_pb_edges_filename = voronoi_filename + "-conn_pb_edges.dat"
+    
+    if eeel_ntwrk == True:
+        if np_oprtn == "":
+            tplgcl_dscrptr_result_filename = (
+                voronoi_filename + "-eeel-" + tplgcl_dscrptr + ".dat"
+            )
+        else:
+            tplgcl_dscrptr_result_filename = (
+                voronoi_filename + "-eeel-" + np_oprtn + "-" + tplgcl_dscrptr
+                + ".dat"
+            )
+    else:
+        if np_oprtn == "":
+            tplgcl_dscrptr_result_filename = (
+                voronoi_filename + "-" + tplgcl_dscrptr + ".dat"
+            )
+        else:
+            tplgcl_dscrptr_result_filename = (
+                voronoi_filename + "-" + np_oprtn + "-" + tplgcl_dscrptr
+                + ".dat"
+            )
 
-    # Load node coordinates
+    # Load simulation box size and node coordinates
+    L = np.loadtxt(L_filename)
     coords = np.loadtxt(coords_filename)
-    dim = np.shape(coords)[1]
 
-    # Load edges
+    # Load fundamental graph constituents
+    core_nodes = np.arange(np.shape(coords)[0], dtype=int)
     conn_core_edges = np.loadtxt(conn_core_edges_filename, dtype=int)
     conn_pb_edges = np.loadtxt(conn_pb_edges_filename, dtype=int)
-    conn_core_m = np.shape(conn_core_edges)[0]
-    conn_pb_m = np.shape(conn_pb_edges)[0]
+    conn_edges = np.vstack((conn_core_edges, conn_pb_edges), dtype=int)
 
-    # Assign node labels via the Hilbert space-filling curve 
-    hilbert_node_labels = hilbert_node_label_assignment(coords, L, dim)
+    # Create nx.Graphs, and add nodes before edges
+    conn_core_graph = nx.Graph()
+    conn_core_graph = add_nodes_from_numpy_array(conn_core_graph, core_nodes)
+    conn_core_graph = add_edges_from_numpy_array(conn_core_graph, conn_core_edges)
 
-    # Construct an np.ndarray that returns the index for each node
-    # number in the hilbert_node_labels np.ndarray
-    hilbert_node_labels_indcs = (
-        -1 * np.ones(np.max(hilbert_node_labels)+1, dtype=int)
-    )
-    hilbert_node_labels_indcs[hilbert_node_labels] = np.arange(
-        np.shape(hilbert_node_labels)[0], dtype=int)
-    
-    # Update the node coordinates with the updated node labels
-    coords = coords[hilbert_node_labels]
+    conn_pb_graph = nx.Graph()
+    conn_pb_graph = add_nodes_from_numpy_array(conn_pb_graph, core_nodes)
+    conn_pb_graph = add_edges_from_numpy_array(conn_pb_graph, conn_pb_edges)
 
-    # Update original node labels with updated node labels
-    for edge in range(conn_core_m):
-        conn_core_edges[edge, 0] = int(
-            hilbert_node_labels_indcs[conn_core_edges[edge, 0]])
-        conn_core_edges[edge, 1] = int(
-            hilbert_node_labels_indcs[conn_core_edges[edge, 1]])
-    for edge in range(conn_pb_m):
-        conn_pb_edges[edge, 0] = int(
-            hilbert_node_labels_indcs[conn_pb_edges[edge, 0]])
-        conn_pb_edges[edge, 1] = int(
-            hilbert_node_labels_indcs[conn_pb_edges[edge, 1]])
-    
-    # Save updated node coordinates
-    np.savetxt(coords_filename, coords)
+    conn_graph = nx.Graph()
+    conn_graph = add_nodes_from_numpy_array(conn_graph, core_nodes)
+    conn_graph = add_edges_from_numpy_array(conn_graph, conn_edges)
 
-    # Save updated edges
-    np.savetxt(conn_core_edges_filename, conn_core_edges, fmt="%d")
-    np.savetxt(conn_pb_edges_filename, conn_pb_edges, fmt="%d")
+    # Call the master network_topological_descriptor() function
+    return network_topological_descriptor(
+        tplgcl_dscrptr, np_oprtn, conn_core_graph, conn_pb_graph, conn_graph,
+        coords, L, length_bound, eeel_ntwrk, tplgcl_dscrptr_result_filename,
+        save_tplgcl_dscrptr_result, return_tplgcl_dscrptr_result)
