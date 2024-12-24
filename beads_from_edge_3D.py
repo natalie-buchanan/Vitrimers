@@ -494,7 +494,7 @@ def generate_and_update(lock, shared_data, **kwargs):
     # Update data
     id_range = np.arange(np.sum(kwargs['len_of_chain'][0:chain_index]) +len(node_data),
                          np.sum(kwargs['len_of_chain'][0:chain_index+1]) +len(node_data),)
-    
+
     with lock:
         bead_data_updated = update_bead_list(
             shared_data['bead_data'], id_range, masterpath, chain_index)
@@ -543,7 +543,8 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
                          'len_of_chain': sim_params['len_of_chain']}
         lock = manager.Lock()
 
-        tasks = [{'edge': edge, 'chain_index': i, 'lock': lock, 'shared_data': shared_data, **system_params}
+        tasks = [{'edge': edge, 'chain_index': i, 'lock': lock, 'shared_data': shared_data,
+                  **system_params}
                  for i, edge in enumerate(full_edge_data)]
 
         with multiprocessing.Pool(processes=num_processes) as pool:
@@ -557,7 +558,7 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
     run_info_array = np.empty([])
     results = pd.DataFrame(data=results, columns=["bead_data", "bond_data", "cycles", "dist"])
     # Update bond_data and bead_data based on results
-    for index, row in results.iterrows():
+    for _, row in results.iterrows():
         bead_data.update(row["bead_data"])
         bond_data.update(row["bond_data"])
         run_info_array = np.append(run_info_array, row[["cycles", "dist"]])
@@ -566,9 +567,9 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
 
 if __name__ == '__main__':
-    STUDY_NAME = '20241219B0C0'
+    STUDY_NAME = '20241219B0C1'
     NETWORK = 'auelp'
-    cpu_num =  1 # int(np.floor(multiprocessing.cpu_count()/2))
+    cpu_num =  int(np.floor(multiprocessing.cpu_count()/2))
 
     [NodeData, FullEdges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME, NETWORK)
     if NodeData.shape[1] == 3:

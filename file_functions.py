@@ -112,9 +112,9 @@ special_bonds   fene
 
 ########## Soft pushoff##############
 pair_style  soft 1.12246
-pair_coeff  * * 10.0 
+pair_coeff  * * 0.0 
 variable        prefactor equal 50.0*elapsed/10000
-fix             softpushoff all adapt 1 pair soft a 1 1 v_prefactor
+fix             softpushoff all adapt 1 pair soft a * * v_prefactor
 #####################################
 
 neighbor        1.0 bin
@@ -128,7 +128,19 @@ fix             ensem all npt temp ${{T}} ${{T}} $(100.0 * dt) iso 0 0 $(1000*dt
 thermo_style custom step temp press density pe ke etotal v_prefactor
 thermo 1000
 
+compute     bondStuff all bond/local dist engpot force
+dump        bondDump all local 1000 bond.dump c_bondStuff[*]
+                   
 dump    dump1 all custom 1000 pushoff.lammpstrj id mol type x y z
 run 10000
+                   
+unfix softpushoff
+pair_style lj/cut 2.5
+pair_coeff * * 1 1
+pair_modify shift yes
+                   
+thermo_style custom step temp press density pe ke etotal
+run 40000
+write_data equil_data.{name} pair ij
 
                    """.format(name=name))
