@@ -1,0 +1,34 @@
+#
+units 		lj
+dimension 	3
+atom_style  bond
+boundary    p p p
+read_data   003.config
+
+special_bonds lj 0.0 1.0 1.0
+
+# Type of bonds to use, see http://lammps.sandia.gov/doc/bond_style.html
+bond_style 	harmonic
+bond_coeff 	1 1000.0 1.0
+
+# Creates initial velocity, the 1.0 is the temperature
+velocity all create 0.7 4928458 mom yes rot yes dist gaussian
+
+timestep 0.002
+
+# Which data to print to the screen, log file
+thermo_style custom step temp pe ke ebond pxx pyy pzz lx ly lz vol density
+thermo 1000
+
+# Soft pushoff
+pair_style soft 1.12
+pair_coeff * *  5.0
+pair_modify shift yes
+
+##=====================##
+## Energy Minimization ##
+##=====================##
+minimize 1.0e-10 1.0e-10 100000 100000
+
+# Writes restart file that could be read in later to resume the simulation
+write_data soft_pushoff.config nocoeff

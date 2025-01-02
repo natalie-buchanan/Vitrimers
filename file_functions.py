@@ -27,6 +27,7 @@ def load_files(name: str, network="auelp"):
         core_coords = np.loadtxt(os.path.join(base_path, f'{name}.coords'))
         edges = np.loadtxt(os.path.join(
             base_path, name + '-conn_core_edges.dat'))
+        print('Number of non-wrapped edges: ' + str(len(edges)) + '\n')
         pb_edges = np.loadtxt(os.path.join(
             base_path, name + '-conn_pb_edges.dat'))
         full_edges = np.concatenate((edges, pb_edges))

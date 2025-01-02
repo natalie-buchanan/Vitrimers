@@ -434,30 +434,39 @@ def generate_chain_path(point_0, point_n, cutoff, len_of_chain, box_size):
 
     # Generate paths until one is found that meets separation criteria
     # or maximum number of cycles is reached
-    while outside_cutoff and cycle < cycle_limit:
-        # Generate path
-        path = constrained_walk(start=point_0, end=point_n,
-                                box_size=box_size, n=len_of_chain)
-        # Find maximum separation between adjacent beads in current chain
-        curr_max = max(calculate_wrapped_distance_full(path, box_size))[0]
-        curr_min = min(calculate_wrapped_distance_full(path, box_size))[0]
-        cycle += 1
-        # If current max separation is smaller than current miminum found
-        #  save path and update maxdist
-        if curr_max< cutoff["max"] and curr_min > cutoff["min"]:
-            outside_cutoff = False
-            masterpath = path
+    if len_of_chain == 1:
+        masterpath = [point_0, point_n]
+        curr_min = 0
+        curr_max = 0
+        cycle = 0
+    else:
+        while outside_cutoff and cycle < cycle_limit:
+            # Generate path
+            path = constrained_walk(start=point_0, end=point_n,
+                                    box_size=box_size, n=len_of_chain)
+            # Find maximum separation between adjacent beads in current chain
+            try:
+                curr_max = max(calculate_wrapped_distance_full(path, box_size))[0]
+                curr_min = min(calculate_wrapped_distance_full(path, box_size))[0]
+                cycle += 1
+            except:
+                print(len(path))
+            # If current max separation is smaller than current miminum found
+            #  save path and update maxdist
+            if curr_max< cutoff["max"] and curr_min > cutoff["min"]:
+                outside_cutoff = False
+                masterpath = path
 
-    # Create even;y spaced points if no paths meeting found within cycle limit
-    if outside_cutoff is True:
-        print("Solution not found within cycle limit")
-        print(len_of_chain, point_0, point_n)
-        masterpath = np.linspace(point_0, point_n, len_of_chain+2)[1:-1]
-    # Move generated positions inside the simulation box
-    curr_max = max(calculate_wrapped_distance_full(masterpath, box_size))[0]
-    curr_min =  min(calculate_wrapped_distance_full(masterpath, box_size))[0]
-    for i, coords in enumerate(masterpath):
-        masterpath[i] = wrap_coords(coords, box_size)
+        # Create even;y spaced points if no paths meeting found within cycle limit
+        if outside_cutoff is True:
+            print("Solution not found within cycle limit")
+            print(len_of_chain, point_0, point_n)
+            masterpath = np.linspace(point_0, point_n, len_of_chain+2)[1:-1]
+        # Move generated positions inside the simulation box
+        curr_max = max(calculate_wrapped_distance_full(masterpath, box_size))[0]
+        curr_min =  min(calculate_wrapped_distance_full(masterpath, box_size))[0]
+        for i, coords in enumerate(masterpath):
+            masterpath[i] = wrap_coords(coords, box_size)
 
 
     return masterpath, [curr_min, curr_max], cycle
@@ -567,9 +576,9 @@ def create_chain_parallel(full_edge_data, bead_data, bond_data, sim_params, num_
 
 
 if __name__ == '__main__':
-    STUDY_NAME = '20241219B0C1'
-    NETWORK = 'auelp'
-    cpu_num =  int(np.floor(multiprocessing.cpu_count()/2))
+    STUDY_NAME = '20241231B0C1'
+    NETWORK = 'apelp'
+    cpu_num =  1 # int(np.floor(multiprocessing.cpu_count()/2))
 
     [NodeData, FullEdges, BOX_SIZE, LENGTH_OF_CHAIN] = load_files(STUDY_NAME, NETWORK)
     if NodeData.shape[1] == 3:

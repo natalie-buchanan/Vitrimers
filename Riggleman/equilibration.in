@@ -1,0 +1,50 @@
+#
+units 		lj
+dimension 	3
+atom_style  bond
+boundary    p p p
+read_data   soft_pushoff.config
+
+special_bonds lj 0.0 1.0 1.0
+
+# Type of bonds to use, see http://lammps.sandia.gov/doc/bond_style.html
+bond_style 	harmonic
+bond_coeff 	1 1000.0 1.0
+
+timestep 0.002
+
+# Which data to print to the screen, log file
+thermo_style custom step temp pe ke ebond pxx pyy pzz lx ly lz vol density
+thermo 1000
+
+#dump 1 all custom 100000 dump.lammpstrj id type mol x y z
+#dump_modify 1 sort id
+
+# LJ minimization
+pair_style lj/cut 2.5
+pair_coeff * * 1.0 1.0 2.5
+pair_modify shift yes
+
+##=====================##
+## Energy Minimization ##
+##=====================##
+minimize 1.0e-10 1.0e-10 100000 100000
+
+reset_timestep 0
+
+# fix npt
+pair_style lj/cut 2.5
+pair_coeff * * 1.0 1.0 2.5
+pair_modify shift yes
+
+# fix npt to equilibrate system to equilibrate volume at P, T
+fix 1 all npt temp 0.7 0.7 1.0 iso 1.0 1.0 10.0
+fix 2 all momentum 1000 linear 1 1 1 angular
+
+# Run 500000 timesteps of the above simulation0
+run 1500000 every 500000 "write_data data.equ* nocoeff"
+unfix 1
+unfix 2
+
+# Writes restart file that could be read in later to resume the simulation
+write_data equilibration.config nocoeff
